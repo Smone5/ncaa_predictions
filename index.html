@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Madness Oracle Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero__content">
+          <p class="eyebrow">Madness Oracle Lab</p>
+          <h1>Research-backed NCAA tournament predictions without fake “100% lock” nonsense.</h1>
+          <p class="hero__lede">
+            This prototype blends seed priors, adjusted efficiency, Dean Oliver-style Four Factors,
+            recent form, and Monte Carlo tournament simulation into an investor-ready dashboard.
+            It aims to make smarter picks — not impossible perfect ones.
+          </p>
+          <div class="hero__actions">
+            <button id="simulateButton" class="button button--primary">Run 10,000 simulations</button>
+            <button id="resetButton" class="button button--ghost">Reset demo teams</button>
+          </div>
+          <div class="hero__badges">
+            <span>AdjEM-driven</span>
+            <span>Four Factors weighted</span>
+            <span>Upset radar</span>
+            <span>Explainable probabilities</span>
+          </div>
+        </div>
+        <aside class="hero__card glass-panel">
+          <h2>Reality check</h2>
+          <p>
+            A truly perfect bracket is astronomically unlikely. The best product is one that helps
+            users make higher-EV decisions, understand uncertainty, and stress-test upset paths.
+          </p>
+          <ul>
+            <li>Win probabilities, not guarantees</li>
+            <li>Editable model weights</li>
+            <li>Simulation-based champion odds</li>
+          </ul>
+        </aside>
+      </header>
+
+      <main class="grid-layout">
+        <section class="glass-panel section-span-8">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Model controls</p>
+              <h2>Dial the engine</h2>
+            </div>
+            <p class="section-copy">
+              Tune how much the model trusts efficiency margin, seed history, Four Factors, recent
+              momentum, and injury penalties.
+            </p>
+          </div>
+          <div id="weightControls" class="controls-grid"></div>
+        </section>
+
+        <section class="glass-panel section-span-4">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Champion board</p>
+              <h2>Title odds</h2>
+            </div>
+          </div>
+          <div id="championBoard" class="champion-board"></div>
+        </section>
+
+        <section class="glass-panel section-span-8">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Teams</p>
+              <h2>Sweet 16 demo field</h2>
+            </div>
+            <p class="section-copy">
+              Edit team quality inputs to reflect your own priors or refresh with current numbers.
+            </p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Team</th>
+                  <th>Seed</th>
+                  <th>AdjO</th>
+                  <th>AdjD</th>
+                  <th>eFG%</th>
+                  <th>TO%</th>
+                  <th>ORB%</th>
+                  <th>FTR</th>
+                  <th>Form</th>
+                  <th>Inj.</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody id="teamTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="glass-panel section-span-4">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Upset lab</p>
+              <h2>Most fragile favorites</h2>
+            </div>
+          </div>
+          <div id="upsetBoard" class="upset-board"></div>
+        </section>
+
+        <section class="glass-panel section-span-12">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Bracket path</p>
+              <h2>Simulated bracket</h2>
+            </div>
+            <p class="section-copy">
+              The bracket reruns from the current model state. Each matchup shows win probability
+              before the stochastic draw is made.
+            </p>
+          </div>
+          <div id="bracketView" class="bracket-view"></div>
+        </section>
+
+        <section class="glass-panel section-span-7">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Why this can work</p>
+              <h2>Playbook for a fundable prediction product</h2>
+            </div>
+          </div>
+          <div class="idea-grid">
+            <article>
+              <h3>1. Blend stable and volatile signals</h3>
+              <p>
+                Adjusted efficiency provides a stable base rate, while form and injury inputs let the
+                model react to March-specific changes.
+              </p>
+            </article>
+            <article>
+              <h3>2. Make the model legible</h3>
+              <p>
+                Investors and users trust systems that explain picks with feature contributions,
+                matchup leverage, and confidence intervals.
+              </p>
+            </article>
+            <article>
+              <h3>3. Optimize for decision quality</h3>
+              <p>
+                The winning consumer product is not “always right.” It helps users beat chalk, know
+                when to zag, and manage bracket pool game theory.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="glass-panel section-span-5">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Research notes</p>
+              <h2>What informed the prototype</h2>
+            </div>
+          </div>
+          <ul class="research-list">
+            <li>Four Factors: shooting, turnovers, rebounding, and free-throw rate.</li>
+            <li>Adjusted offensive and defensive efficiency remain core predictive signals.</li>
+            <li>Simulation beats single deterministic brackets for communicating uncertainty.</li>
+            <li>Perfect-bracket marketing is nonsense; expected value and calibration matter more.</li>
+          </ul>
+          <p class="research-footnote">
+            Sources reviewed during design included NCAA.com bracket-odds explainers, Basketball-
+            Reference’s Four Factors summary, and historical Kaggle March Madness modeling writeups.
+          </p>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
