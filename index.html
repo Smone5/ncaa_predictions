@@ -23,19 +23,61 @@
             simulates all six rounds, and turns probabilities into betting edges so you can hunt for
             mispriced lines instead of pretending any app can be 100% right.
           </p>
-          <div class="hero__actions">
-            <button id="simulateButton" class="button button--primary">Run 25,000 simulations</button>
-            <button id="resetButton" class="button button--ghost">Reset full field</button>
-            <button id="saveLocalButton" class="button button--ghost">Save to database</button>
-            <button id="exportButton" class="button button--ghost">Export picks</button>
-            <button id="importButton" class="button button--ghost">Import picks</button>
-            <button id="clearStorageButton" class="button button--ghost">Clear database save</button>
-            <input id="importFileInput" type="file" accept="application/json" hidden />
+          <div class="hero__control-dock">
+            <div class="hero__primary-actions">
+              <button id="simulateButton" class="button button--primary">Run 25,000 simulations</button>
+              <button id="loadOfficialFieldButton" class="button button--ghost">Load official 2026 field</button>
+              <button id="syncLiveButton" class="button button--ghost">Sync results, odds + news</button>
+              <button id="generateAiPrefillButton" class="button button--ghost">Generate researched AI prefill</button>
+            </div>
+            <div class="hero__action-groups">
+              <section class="action-group">
+                <div class="action-group__heading">
+                  <p class="eyebrow">Validation</p>
+                  <span>Test, evolve, and reset the model.</span>
+                </div>
+                <div class="action-group__buttons">
+                  <button id="runBacktestButton" class="button button--ghost">Run historical backtest</button>
+                  <button id="runEvolutionButton" class="button button--ghost">Run evolution lab</button>
+                  <button id="runStrategyButton" class="button button--ghost">Run strategy lab</button>
+                  <button id="resetButton" class="button button--ghost">Reset loaded field</button>
+                </div>
+              </section>
+              <section class="action-group">
+                <div class="action-group__heading">
+                  <p class="eyebrow">Apply Updates</p>
+                  <span>Move synced context into the model.</span>
+                </div>
+                <div class="action-group__buttons">
+                  <button id="applyLiveOddsButton" class="button button--ghost">Apply live odds</button>
+                  <button id="applyNewsSignalsButton" class="button button--ghost">Apply news context</button>
+                  <button id="applyAiPrefillButton" class="button button--ghost">Apply AI prefill</button>
+                  <button id="applyEvolutionButton" class="button button--ghost">Apply evolved weights</button>
+                  <button id="applyStrategyButton" class="button button--ghost">Apply evolved strategy</button>
+                </div>
+              </section>
+              <section class="action-group">
+                <div class="action-group__heading">
+                  <p class="eyebrow">Storage + Sharing</p>
+                  <span>Persist, export, and restore your work.</span>
+                </div>
+                <div class="action-group__buttons">
+                  <button id="saveLocalButton" class="button button--ghost">Save to database</button>
+                  <button id="exportButton" class="button button--ghost">Export picks</button>
+                  <button id="importButton" class="button button--ghost">Import picks</button>
+                  <button id="clearStorageButton" class="button button--ghost">Clear database save</button>
+                </div>
+              </section>
+              <input id="importFileInput" type="file" accept="application/json" hidden />
+            </div>
           </div>
           <div class="hero__badges">
             <span>64-team bracket</span>
+            <span>Official NCAA sync</span>
+            <span>Backtest baseline</span>
             <span>Market edge view</span>
             <span>Monte Carlo</span>
+            <span>Paper bankroll</span>
             <span>Explainable ratings</span>
           </div>
         </div>
@@ -53,8 +95,19 @@
         </div>
       </header>
 
+      <nav id="workspaceNav" class="workspace-nav glass-panel" aria-label="Dashboard workspaces">
+        <div class="workspace-nav__copy">
+          <p class="eyebrow">Workspaces</p>
+          <h2>Use focused sections instead of one long scroll</h2>
+          <p class="section-copy">
+            Switch between the current edge, live research, editing, and validation views without carrying the whole dashboard at once.
+          </p>
+        </div>
+        <div id="workspaceTabs" class="workspace-tabs"></div>
+      </nav>
+
       <main class="dashboard">
-        <section class="glass-panel span-8">
+        <section class="glass-panel span-8 dashboard-panel" data-workspace="overview">
           <div class="section-heading">
             <div>
               <p class="eyebrow">Model tuning</p>
@@ -67,7 +120,7 @@
           <div id="weightControls" class="controls-grid"></div>
         </section>
 
-        <section class="glass-panel span-4">
+        <section class="glass-panel span-4 dashboard-panel" data-workspace="overview">
           <div class="section-heading compact">
             <div>
               <p class="eyebrow">Simulation snapshot</p>
@@ -77,7 +130,21 @@
           <div id="summaryCards" class="summary-cards"></div>
         </section>
 
-        <section class="glass-panel span-6">
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="overview">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Season source</p>
+              <h2>Official 2026 field status</h2>
+            </div>
+            <p class="section-copy">
+              This panel shows whether the app is using the live 2026 NCAA bracket and official NCAA
+              team-stat feed, or a local/demo fallback.
+            </p>
+          </div>
+          <div id="seasonStatus" class="season-status-grid"></div>
+        </section>
+
+        <section class="glass-panel span-6 dashboard-panel" data-workspace="overview">
           <div class="section-heading compact">
             <div>
               <p class="eyebrow">Title market</p>
@@ -87,39 +154,185 @@
           <div id="championBoard" class="stack-list"></div>
         </section>
 
-        <section class="glass-panel span-6">
+        <section class="glass-panel span-6 dashboard-panel" data-workspace="overview">
           <div class="section-heading compact">
             <div>
               <p class="eyebrow">Betting radar</p>
-              <h2>Best first-round moneyline edges</h2>
+              <h2>Best current-round moneyline edges</h2>
             </div>
           </div>
           <div id="edgeBoard" class="stack-list"></div>
         </section>
 
-        <section class="glass-panel span-12">
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="overview">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">First-round market board</p>
-              <h2>Where model and book disagree</h2>
+              <p class="eyebrow">Recommendation</p>
+              <h2>Best bet right now</h2>
             </div>
             <p class="section-copy">
-              Enter or edit sportsbook moneylines for each first-round game. The app converts them into
-              implied probabilities and highlights spots where the model sees value after comparing fair
-              odds to the listed price.
+              This is the model's current favorite live-round edge after finished NCAA results are
+              folded into the bracket and surviving games are repriced.
+            </p>
+          </div>
+          <div id="recommendationBoard" class="recommendation-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="betting">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Paper bankroll</p>
+              <h2>How much to bet and how to hedge</h2>
+            </div>
+            <p class="section-copy">
+              This turns the model into a paper-trading workflow: fractional Kelly sizing, stake caps,
+              hedge math, live round advancement, and a running bankroll instead of vague “I like this team” advice.
+            </p>
+          </div>
+          <div class="portfolio-controls">
+            <label>
+              <span>Starting bankroll</span>
+              <input id="startingBankrollInput" type="number" min="100" step="50" value="1000" />
+            </label>
+            <label>
+              <span>Kelly multiplier</span>
+              <input id="kellyMultiplierInput" type="number" min="0" max="1" step="0.05" value="0.35" />
+            </label>
+            <label>
+              <span>Max stake %</span>
+              <input id="maxStakePctInput" type="number" min="1" max="25" step="0.5" value="5" />
+            </label>
+            <label>
+              <span>Max open risk %</span>
+              <input id="maxOpenRiskPctInput" type="number" min="1" max="50" step="0.5" value="15" />
+            </label>
+            <label>
+              <span>Min edge pts</span>
+              <input id="minEdgePctInput" type="number" min="0" max="15" step="0.1" value="2" />
+            </label>
+            <label>
+              <span>Min confidence</span>
+              <input id="minConfidenceInput" type="number" min="0.5" max="0.95" step="0.01" value="0.55" />
+            </label>
+            <label>
+              <span>Hedge style</span>
+              <select id="hedgeStyleSelect">
+                <option value="none">No hedge</option>
+                <option value="equalResult">Equal result</option>
+                <option value="breakEven">Break even</option>
+              </select>
+            </label>
+            <label>
+              <span>Auto-refresh min</span>
+              <input id="autoRefreshMinutesInput" type="number" min="1" max="60" step="1" value="5" />
+            </label>
+            <label>
+              <span>Odds sync mode</span>
+              <select id="liveOddsModeSelect">
+                <option value="best">Best available</option>
+                <option value="consensus">Consensus median</option>
+              </select>
+            </label>
+            <label class="toggle-row">
+              <span>Auto-sync live data</span>
+              <input id="autoSyncInput" type="checkbox" />
+            </label>
+            <label class="toggle-row">
+              <span>Auto-apply news</span>
+              <input id="autoApplyNewsInput" type="checkbox" />
+            </label>
+          </div>
+          <div id="tournamentStatusBoard" class="season-status-grid"></div>
+          <div id="portfolioSummary" class="summary-cards"></div>
+          <div id="betSizingBoard" class="portfolio-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="research">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Live context</p>
+              <h2>Real-time results, odds, and matchup news</h2>
+            </div>
+            <p class="section-copy">
+              Live sync is optional. If API keys are present, the app can refresh sportsbook prices and
+              recent news for the current open games without leaving the board. NCAA tournament results
+              advance the bracket first, then news context is translated into heuristic injury scores before you choose whether to apply it.
+            </p>
+          </div>
+          <div id="liveStatusBoard" class="season-status-grid"></div>
+          <div id="signalBoard" class="portfolio-grid"></div>
+          <div id="newsBoard" class="news-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="research">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">AI prefill</p>
+              <h2>Pre-populate human override fields with LLM analysis</h2>
+            </div>
+            <p class="section-copy">
+              This layer uses official stats, live news signals, and recent articles to suggest
+              coach, experience, continuity, injuries, and form values before you make manual edits.
+              It researches priority teams first so the notes can stay source-backed instead of hand-wavy.
+            </p>
+          </div>
+          <div id="aiPrefillStatus" class="season-status-grid"></div>
+          <div id="aiPrefillBoard" class="portfolio-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="betting">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Ledger</p>
+              <h2>Simulated bets and earnings over time</h2>
+            </div>
+            <p class="section-copy">
+              Track paper bets, mark wins and losses, and let finished NCAA games auto-settle matching tickets as the bankroll curve evolves over time.
+            </p>
+          </div>
+          <div id="equityCurve" class="equity-card"></div>
+          <div class="table-wrap table-wrap--tall">
+            <table>
+              <thead>
+                <tr>
+                  <th>Placed</th>
+                  <th>Bet</th>
+                  <th>Odds</th>
+                  <th>Stake</th>
+                  <th>To win</th>
+                  <th>EV</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="betLedgerBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="betting">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Current-round market board</p>
+              <h2>Where the model and book disagree right now</h2>
+            </div>
+            <p class="section-copy">
+              Enter or edit sportsbook moneylines for the games that are actually open right now. The app
+              converts them into implied probabilities and highlights spots where the model sees value after
+              comparing fair odds to the listed price.
             </p>
           </div>
           <div id="marketBoard" class="market-board"></div>
         </section>
 
-        <section class="glass-panel span-12">
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="teams">
           <div class="section-heading">
             <div>
               <p class="eyebrow">Full field editor</p>
               <h2>All 64 teams</h2>
             </div>
             <p class="section-copy">
-              Adjust region, seed, efficiency, Four Factors, form, injuries, coaching, experience, continuity, and market inputs.
+              Adjust region, seed, offense, defense, shooting, turnover control, rebounding, form, injuries, coaching, experience, continuity, and market inputs.
             </p>
           </div>
           <div class="table-wrap">
@@ -132,9 +345,9 @@
                   <th>AdjO</th>
                   <th>AdjD</th>
                   <th>eFG%</th>
-                  <th>TO%</th>
-                  <th>ORB%</th>
-                  <th>FTR</th>
+                  <th>TOV</th>
+                  <th>OREB</th>
+                  <th>FT%</th>
                   <th>Form</th>
                   <th>Inj.</th>
                   <th>Coach</th>
@@ -150,7 +363,7 @@
         </section>
 
 
-        <section class="glass-panel span-12">
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="teams">
           <div class="section-heading">
             <div>
               <p class="eyebrow">Architecture + privacy</p>
@@ -188,21 +401,76 @@
           </div>
         </section>
 
-        <section class="glass-panel span-12">
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="betting">
           <div class="section-heading">
             <div>
               <p class="eyebrow">Bracket engine</p>
               <h2>Region-by-region simulation path</h2>
             </div>
             <p class="section-copy">
-              Each region is seeded using the real 1-16 bracket structure, then advanced through the
-              Final Four and title game.
+              Completed NCAA games are locked in first, then the unresolved parts of each region are
+              simulated forward through the Final Four and title game.
             </p>
           </div>
           <div id="bracketView" class="bracket-grid"></div>
         </section>
 
-        <section class="glass-panel span-12">
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="validation">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Backtest</p>
+              <h2>How the system did on prior years</h2>
+            </div>
+            <p class="section-copy">
+              Historical results use archived NCAA bracket pages. Where archived NCAA team-stat feeds are
+              unavailable, the backtest falls back to the model's seed-based proxy ratings.
+            </p>
+          </div>
+          <div id="backtestBoard" class="backtest-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="validation">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Evolution lab</p>
+              <h2>Learn stable meta-signals without chasing noise</h2>
+            </div>
+            <p class="section-copy">
+              This search repeatedly mutates the model weights on archived tournaments, checks them with leave-one-year-out folds, and shrinks the answer back toward the default profile before suggesting anything for the live season.
+            </p>
+          </div>
+          <div id="evolutionBoard" class="backtest-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="validation">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Strategy lab</p>
+              <h2>Learn how this model should actually bet</h2>
+            </div>
+            <p class="section-copy">
+              This search keeps the base model fixed and evolves a paper-trading profile instead:
+              edge threshold, Kelly scaling, stake caps, open-risk caps, confidence gating, and hedge style.
+            </p>
+          </div>
+          <div id="strategyBoard" class="backtest-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="research">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Glossary</p>
+              <h2>What everything means</h2>
+            </div>
+            <p class="section-copy">
+              Official NCAA metric definitions are combined with the app's own model concepts so you can
+              see what each number is trying to capture.
+            </p>
+          </div>
+          <div id="glossaryBoard" class="glossary-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="validation">
           <div class="section-heading">
             <div>
               <p class="eyebrow">Research stance</p>

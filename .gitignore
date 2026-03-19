@@ -1,2 +1,5 @@
 target/
 madness_oracle.db
+.env
+.env.local
+.env.*.local

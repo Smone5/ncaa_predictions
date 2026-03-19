@@ -29,6 +29,22 @@ It is still a prototype, but it is more aligned with the way current academic an
 
 ## Run locally
 
+Copy `.env.example` to `.env` and add any keys you want to use:
+
+```bash
+cp .env.example .env
+```
+
+Supported variables:
+
+- `OPENAI_API_KEY`: enables researched AI prefills for coach, experience, continuity, injuries, and form
+- `OPENAI_PREFILL_MODEL`: optional override for the AI prefill model, default is `gpt-5-mini`
+- `OPENAI_RESEARCH_TEAM_LIMIT`: optional cap for how many teams get deeper web research, default is `12`
+- `THE_ODDS_API_KEY`: enables live sportsbook odds sync
+- `NEWSAPI_KEY`: enables live news ingestion
+
+Then start the app:
+
 ```bash
 cargo run
 ```

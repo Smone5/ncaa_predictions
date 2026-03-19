@@ -17,6 +17,10 @@ struct StoredState {
     saved_at: String,
     teams: serde_json::Value,
     weights: serde_json::Value,
+    #[serde(default)]
+    portfolio: serde_json::Value,
+    #[serde(default)]
+    tournament: serde_json::Value,
 }
 
 fn db_path() -> PathBuf {
@@ -31,28 +35,36 @@ fn initialize_db(db_path: &PathBuf) -> rusqlite::Result<()> {
             version INTEGER NOT NULL,
             saved_at TEXT NOT NULL,
             teams_json TEXT NOT NULL,
-            weights_json TEXT NOT NULL
+            weights_json TEXT NOT NULL,
+            portfolio_json TEXT,
+            tournament_json TEXT
         )",
         [],
     )?;
+    ensure_column(&connection, "app_state", "portfolio_json", "TEXT")?;
+    ensure_column(&connection, "app_state", "tournament_json", "TEXT")?;
     Ok(())
 }
 
 fn load_state_from_db(db_path: &PathBuf) -> rusqlite::Result<Option<StoredState>> {
     let connection = Connection::open(db_path)?;
     let mut statement = connection.prepare(
-        "SELECT version, saved_at, teams_json, weights_json FROM app_state WHERE id = 1",
+        "SELECT version, saved_at, teams_json, weights_json, COALESCE(portfolio_json, 'null'), COALESCE(tournament_json, 'null') FROM app_state WHERE id = 1",
     )?;
 
     statement
         .query_row([], |row| {
             let teams_json: String = row.get(2)?;
             let weights_json: String = row.get(3)?;
+            let portfolio_json: String = row.get(4)?;
+            let tournament_json: String = row.get(5)?;
             Ok(StoredState {
                 version: row.get(0)?,
                 saved_at: row.get(1)?,
                 teams: serde_json::from_str(&teams_json).map_err(to_sql_error)?,
                 weights: serde_json::from_str(&weights_json).map_err(to_sql_error)?,
+                portfolio: serde_json::from_str(&portfolio_json).map_err(to_sql_error)?,
+                tournament: serde_json::from_str(&tournament_json).map_err(to_sql_error)?,
             })
         })
         .optional()
@@ -62,13 +74,15 @@ fn save_state_to_db(db_path: &PathBuf, payload: &StoredState) -> Result<(), Stri
     let connection = Connection::open(db_path).map_err(|error| error.to_string())?;
     connection
         .execute(
-            "INSERT INTO app_state (id, version, saved_at, teams_json, weights_json)
-             VALUES (1, ?1, ?2, ?3, ?4)
+            "INSERT INTO app_state (id, version, saved_at, teams_json, weights_json, portfolio_json, tournament_json)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(id) DO UPDATE SET
                 version = excluded.version,
                 saved_at = excluded.saved_at,
                 teams_json = excluded.teams_json,
-                weights_json = excluded.weights_json",
+                weights_json = excluded.weights_json,
+                portfolio_json = excluded.portfolio_json,
+                tournament_json = excluded.tournament_json",
             params![
                 payload.version,
                 if payload.saved_at.is_empty() {
@@ -78,6 +92,8 @@ fn save_state_to_db(db_path: &PathBuf, payload: &StoredState) -> Result<(), Stri
                 },
                 serde_json::to_string(&payload.teams).map_err(|error| error.to_string())?,
                 serde_json::to_string(&payload.weights).map_err(|error| error.to_string())?,
+                serde_json::to_string(&payload.portfolio).map_err(|error| error.to_string())?,
+                serde_json::to_string(&payload.tournament).map_err(|error| error.to_string())?,
             ],
         )
         .map_err(|error| error.to_string())?;
@@ -94,6 +110,27 @@ fn clear_state_in_db(db_path: &PathBuf) -> Result<(), String> {
 
 fn to_sql_error(error: serde_json::Error) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if !columns.iter().any(|existing| existing == column) {
+        connection.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+            [],
+        )?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -158,6 +195,8 @@ mod tests {
             saved_at: "2026-03-19T00:00:00Z".into(),
             teams: serde_json::json!([{"name": "Houston"}]),
             weights: serde_json::json!({"marketBlend": 18}),
+            portfolio: serde_json::json!({"startingBankroll": 1000, "bets": []}),
+            tournament: serde_json::json!({"year": 2026, "games": []}),
         }
     }
 
@@ -175,6 +214,8 @@ mod tests {
         assert_eq!(loaded.version, state.version);
         assert_eq!(loaded.teams, state.teams);
         assert_eq!(loaded.weights, state.weights);
+        assert_eq!(loaded.portfolio, state.portfolio);
+        assert_eq!(loaded.tournament, state.tournament);
 
         let _ = std::fs::remove_file(db_path);
     }
