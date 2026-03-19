@@ -1,0 +1,26 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/schema.json",
+  "build": {
+    "beforeDevCommand": "python3 -m http.server 8000",
+    "beforeBuildCommand": "",
+    "devPath": "http://127.0.0.1:8000",
+    "distDir": "../"
+  },
+  "package": {
+    "productName": "Madness Oracle Pro",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "windows": [
+      {
+        "title": "Madness Oracle Pro",
+        "width": 1600,
+        "height": 1000,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}
