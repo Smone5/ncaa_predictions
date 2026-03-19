@@ -26,6 +26,11 @@
           <div class="hero__actions">
             <button id="simulateButton" class="button button--primary">Run 25,000 simulations</button>
             <button id="resetButton" class="button button--ghost">Reset full field</button>
+            <button id="saveLocalButton" class="button button--ghost">Save locally</button>
+            <button id="exportButton" class="button button--ghost">Export picks</button>
+            <button id="importButton" class="button button--ghost">Import picks</button>
+            <button id="clearStorageButton" class="button button--ghost">Clear local save</button>
+            <input id="importFileInput" type="file" accept="application/json" hidden />
           </div>
           <div class="hero__badges">
             <span>64-team bracket</span>
@@ -141,6 +146,45 @@
               </thead>
               <tbody id="teamTableBody"></tbody>
             </table>
+          </div>
+        </section>
+
+
+        <section class="glass-panel span-12">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Architecture + privacy</p>
+              <h2>What this app is — and what it is not</h2>
+            </div>
+            <p class="section-copy">
+              Today this is a local-first static web app. There is no backend, no SQLite, and no Rust runtime in the current prototype.
+            </p>
+          </div>
+          <div class="research-grid">
+            <article>
+              <h3>Private by default</h3>
+              <p>
+                Predictions stay in your browser unless you explicitly export them. Local saves use browser storage on your machine.
+              </p>
+            </article>
+            <article>
+              <h3>No server yet</h3>
+              <p>
+                There is currently no API, no cloud sync, and no database collecting picks. That is good for privacy, but it also means no cross-device syncing.
+              </p>
+            </article>
+            <article>
+              <h3>No SQLite today</h3>
+              <p>
+                If you wanted offline multi-user profiles or audit history, SQLite would be a reasonable next step — but this prototype is simpler and browser-only right now.
+              </p>
+            </article>
+            <article>
+              <h3>No Rust runtime today</h3>
+              <p>
+                The current build is plain HTML/CSS/JS. If you want a private desktop app later, wrapping this in Rust with Tauri would be a strong next move.
+              </p>
+            </article>
           </div>
         </section>
 

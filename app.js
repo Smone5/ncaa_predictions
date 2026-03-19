@@ -91,6 +91,8 @@ function buildDefaultTeams() {
   );
 }
 
+const STORAGE_KEY = 'madness-oracle-pro-state-v1';
+
 let teams = buildDefaultTeams();
 let weights = { ...defaultWeights };
 
@@ -103,6 +105,69 @@ const teamTableBody = document.getElementById('teamTableBody');
 const bracketView = document.getElementById('bracketView');
 const simulateButton = document.getElementById('simulateButton');
 const resetButton = document.getElementById('resetButton');
+const saveLocalButton = document.getElementById('saveLocalButton');
+const exportButton = document.getElementById('exportButton');
+const importButton = document.getElementById('importButton');
+const clearStorageButton = document.getElementById('clearStorageButton');
+const importFileInput = document.getElementById('importFileInput');
+
+
+function serializeState() {
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    teams,
+    weights,
+  };
+}
+
+function persistState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeState()));
+}
+
+function loadPersistedState() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed.teams) && parsed.weights) {
+      teams = parsed.teams;
+      weights = { ...defaultWeights, ...parsed.weights };
+    }
+  } catch (error) {
+    console.warn('Failed to load saved state', error);
+  }
+}
+
+function exportState() {
+  const blob = new Blob([JSON.stringify(serializeState(), null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = 'madness-oracle-picks.json';
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function importState(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(String(reader.result));
+      if (!Array.isArray(parsed.teams) || !parsed.weights) {
+        throw new Error('Invalid export format');
+      }
+      teams = parsed.teams;
+      weights = { ...defaultWeights, ...parsed.weights };
+      renderWeightControls();
+      renderAll();
+      persistState();
+    } catch (error) {
+      alert('Import failed: invalid JSON export file.');
+    }
+  };
+  reader.readAsText(file);
+}
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -625,6 +690,7 @@ function sanitizeField() {
 
 function renderAll() {
   sanitizeField();
+  persistState();
   renderTeamTable();
   const matchups = firstRoundMatchups();
   const simulation = simulateTournament(25000);
@@ -636,6 +702,21 @@ function renderAll() {
 }
 
 simulateButton.addEventListener('click', renderAll);
+saveLocalButton.addEventListener('click', () => {
+  persistState();
+});
+exportButton.addEventListener('click', exportState);
+importButton.addEventListener('click', () => {
+  importFileInput.click();
+});
+importFileInput.addEventListener('change', (event) => {
+  const [file] = event.target.files || [];
+  if (file) importState(file);
+  event.target.value = '';
+});
+clearStorageButton.addEventListener('click', () => {
+  localStorage.removeItem(STORAGE_KEY);
+});
 resetButton.addEventListener('click', () => {
   teams = buildDefaultTeams();
   weights = { ...defaultWeights };
@@ -643,5 +724,6 @@ resetButton.addEventListener('click', () => {
   renderAll();
 });
 
+loadPersistedState();
 renderWeightControls();
 renderAll();
