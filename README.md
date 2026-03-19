@@ -30,10 +30,10 @@ It is still a prototype, but it is more aligned with the way current academic an
 ## Run locally
 
 ```bash
-python3 -m http.server 8000
+cargo run
 ```
 
-Open `http://localhost:8000`.
+Open `http://127.0.0.1:3000`.
 
 ## Product stance
 
@@ -46,16 +46,16 @@ A few important product / architecture realities were missing before:
 
 - **Privacy**: many users will not want to publish or sync their bracket logic, betting edges, or custom team ratings.
 - **Persistence**: without local save/export, users can lose their work on refresh.
-- **Architecture clarity**: the current prototype is **not** backed by a database, **not** using SQLite, and **not** running as a Rust app today.
-- **Deployment choice**: if you want stronger privacy, the likely next step is a **local-first desktop wrapper** (for example Tauri + Rust) or an encrypted backend.
+- **Architecture clarity**: the current prototype now uses a local Rust server plus SQLite, but it still does not have multi-user auth, sync, or encryption at rest.
+- **Deployment choice**: if you want stronger privacy and packaging, the next step is a true desktop wrapper (for example Tauri + Rust) or an encrypted backend.
 
 ## Current architecture
 
 Right now the app is intentionally simple:
 
-- **Frontend only**: static HTML, CSS, and JavaScript.
-- **No backend service**: no API server receives picks or team edits.
-- **No database**: no Postgres, no SQLite, no cloud persistence in the current repo.
-- **Local persistence**: browser storage plus import/export is the best fit for this prototype stage.
+- **Rust app server**: `src/main.rs` starts an Axum server on `127.0.0.1:3000` and serves the frontend plus local API routes.
+- **SQLite persistence**: the app stores saved state in a local `madness_oracle.db` file.
+- **No cloud backend**: no remote API, no hosted database, and no forced sharing of picks.
+- **Local portability**: JSON import/export still exists for backup or moving data between machines.
 
-That means users keep predictions on-device unless they choose to export them.
+That means users keep predictions on-device unless they choose to export them, and the persistence layer is now a real local database rather than browser storage.

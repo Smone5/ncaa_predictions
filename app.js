@@ -91,7 +91,8 @@ function buildDefaultTeams() {
   );
 }
 
-const STORAGE_KEY = 'madness-oracle-pro-state-v1';
+const API_STATE_URL = '/api/state';
+let persistTimeout;
 
 let teams = buildDefaultTeams();
 let weights = { ...defaultWeights };
@@ -121,21 +122,34 @@ function serializeState() {
   };
 }
 
-function persistState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeState()));
+async function persistState() {
+  await fetch(API_STATE_URL, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(serializeState()),
+  });
 }
 
-function loadPersistedState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return;
+function schedulePersistState() {
+  window.clearTimeout(persistTimeout);
+  persistTimeout = window.setTimeout(() => {
+    persistState().catch((error) => {
+      console.warn('Failed to persist sqlite state', error);
+    });
+  }, 250);
+}
+
+async function loadPersistedState() {
   try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed.teams) && parsed.weights) {
+    const response = await fetch(API_STATE_URL);
+    if (!response.ok) return;
+    const parsed = await response.json();
+    if (parsed && Array.isArray(parsed.teams) && parsed.weights) {
       teams = parsed.teams;
       weights = { ...defaultWeights, ...parsed.weights };
     }
   } catch (error) {
-    console.warn('Failed to load saved state', error);
+    console.warn('Failed to load saved sqlite state', error);
   }
 }
 
@@ -161,7 +175,7 @@ function importState(file) {
       weights = { ...defaultWeights, ...parsed.weights };
       renderWeightControls();
       renderAll();
-      persistState();
+      schedulePersistState();
     } catch (error) {
       alert('Import failed: invalid JSON export file.');
     }
@@ -690,7 +704,7 @@ function sanitizeField() {
 
 function renderAll() {
   sanitizeField();
-  persistState();
+  schedulePersistState();
   renderTeamTable();
   const matchups = firstRoundMatchups();
   const simulation = simulateTournament(25000);
@@ -703,7 +717,9 @@ function renderAll() {
 
 simulateButton.addEventListener('click', renderAll);
 saveLocalButton.addEventListener('click', () => {
-  persistState();
+  persistState().catch((error) => {
+    console.warn('Failed to save sqlite state', error);
+  });
 });
 exportButton.addEventListener('click', exportState);
 importButton.addEventListener('click', () => {
@@ -715,7 +731,9 @@ importFileInput.addEventListener('change', (event) => {
   event.target.value = '';
 });
 clearStorageButton.addEventListener('click', () => {
-  localStorage.removeItem(STORAGE_KEY);
+  fetch(API_STATE_URL, { method: 'DELETE' }).catch((error) => {
+    console.warn('Failed to clear sqlite state', error);
+  });
 });
 resetButton.addEventListener('click', () => {
   teams = buildDefaultTeams();
@@ -724,6 +742,10 @@ resetButton.addEventListener('click', () => {
   renderAll();
 });
 
-loadPersistedState();
-renderWeightControls();
-renderAll();
+async function boot() {
+  await loadPersistedState();
+  renderWeightControls();
+  renderAll();
+}
+
+boot();
