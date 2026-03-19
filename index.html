@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Madness Oracle Pro</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero glass-panel">
+        <div class="hero__copy">
+          <p class="eyebrow">Madness Oracle Pro</p>
+          <h1>A real 64-team March Madness betting and bracket workbench.</h1>
+          <p class="hero__lede">
+            Yes — the tournament has 64 teams in the main bracket. This version models the full field,
+            simulates all six rounds, and turns probabilities into betting edges so you can hunt for
+            mispriced lines instead of pretending any app can be 100% right.
+          </p>
+          <div class="hero__actions">
+            <button id="simulateButton" class="button button--primary">Run 25,000 simulations</button>
+            <button id="resetButton" class="button button--ghost">Reset full field</button>
+            <button id="saveLocalButton" class="button button--ghost">Save to database</button>
+            <button id="exportButton" class="button button--ghost">Export picks</button>
+            <button id="importButton" class="button button--ghost">Import picks</button>
+            <button id="clearStorageButton" class="button button--ghost">Clear database save</button>
+            <input id="importFileInput" type="file" accept="application/json" hidden />
+          </div>
+          <div class="hero__badges">
+            <span>64-team bracket</span>
+            <span>Market edge view</span>
+            <span>Monte Carlo</span>
+            <span>Explainable ratings</span>
+          </div>
+        </div>
+        <div class="hero__card">
+          <h2>How to actually use this</h2>
+          <ul>
+            <li>Start with efficiency and Four Factors.</li>
+            <li>Blend in injuries, travel, recent form, coach quality, and roster experience.</li>
+            <li>Compare model probabilities to sportsbook prices.</li>
+            <li>Bet only when model edge survives vig and uncertainty.</li>
+          </ul>
+          <p class="hero__note">
+            Goal: beat bad prices and improve bracket EV. Not magic. Not certainty. Not “free money.”
+          </p>
+        </div>
+      </header>
+
+      <main class="dashboard">
+        <section class="glass-panel span-8">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Model tuning</p>
+              <h2>Weight the signals</h2>
+            </div>
+            <p class="section-copy">
+              This version explicitly leans on academic-style ensemble ideas: logistic team-strength modeling, seed priors, market priors with vig removal, and uncertainty shrinkage.
+            </p>
+          </div>
+          <div id="weightControls" class="controls-grid"></div>
+        </section>
+
+        <section class="glass-panel span-4">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Simulation snapshot</p>
+              <h2>Key outputs</h2>
+            </div>
+          </div>
+          <div id="summaryCards" class="summary-cards"></div>
+        </section>
+
+        <section class="glass-panel span-6">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Title market</p>
+              <h2>Championship odds</h2>
+            </div>
+          </div>
+          <div id="championBoard" class="stack-list"></div>
+        </section>
+
+        <section class="glass-panel span-6">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">Betting radar</p>
+              <h2>Best first-round moneyline edges</h2>
+            </div>
+          </div>
+          <div id="edgeBoard" class="stack-list"></div>
+        </section>
+
+        <section class="glass-panel span-12">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">First-round market board</p>
+              <h2>Where model and book disagree</h2>
+            </div>
+            <p class="section-copy">
+              Enter or edit sportsbook moneylines for each first-round game. The app converts them into
+              implied probabilities and highlights spots where the model sees value after comparing fair
+              odds to the listed price.
+            </p>
+          </div>
+          <div id="marketBoard" class="market-board"></div>
+        </section>
+
+        <section class="glass-panel span-12">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Full field editor</p>
+              <h2>All 64 teams</h2>
+            </div>
+            <p class="section-copy">
+              Adjust region, seed, efficiency, Four Factors, form, injuries, coaching, experience, continuity, and market inputs.
+            </p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Region</th>
+                  <th>Seed</th>
+                  <th>Team</th>
+                  <th>AdjO</th>
+                  <th>AdjD</th>
+                  <th>eFG%</th>
+                  <th>TO%</th>
+                  <th>ORB%</th>
+                  <th>FTR</th>
+                  <th>Form</th>
+                  <th>Inj.</th>
+                  <th>Coach</th>
+                  <th>Exp</th>
+                  <th>Cont.</th>
+                  <th>ML</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody id="teamTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+
+        <section class="glass-panel span-12">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Architecture + privacy</p>
+              <h2>What this app is — and what it is not</h2>
+            </div>
+            <p class="section-copy">
+              Today this can run two ways: as a local Rust + Axum web app, or as a desktop-ready Tauri shell using the same SQLite-backed state model.
+            </p>
+          </div>
+          <div class="research-grid">
+            <article>
+              <h3>Private by default</h3>
+              <p>
+                Predictions stay on-device unless you explicitly export them. Saves are written to a local SQLite file through the Rust app.
+              </p>
+            </article>
+            <article>
+              <h3>No cloud backend</h3>
+              <p>
+                There is a local API now, but no cloud sync and no remote database collecting picks. That keeps the prototype private by default, but still means no cross-device syncing.
+              </p>
+            </article>
+            <article>
+              <h3>SQLite local DB</h3>
+              <p>
+                SQLite is now the persistence layer for the prototype, which gives you a real local database without forcing users to upload private picks.
+              </p>
+            </article>
+            <article>
+              <h3>Tauri status</h3>
+              <p>
+                This repo now includes Tauri desktop scaffolding so the next packaging step is an installable desktop app instead of a browser-only workflow.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="glass-panel span-12">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Bracket engine</p>
+              <h2>Region-by-region simulation path</h2>
+            </div>
+            <p class="section-copy">
+              Each region is seeded using the real 1-16 bracket structure, then advanced through the
+              Final Four and title game.
+            </p>
+          </div>
+          <div id="bracketView" class="bracket-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Research stance</p>
+              <h2>What current academic-style research informed</h2>
+            </div>
+          </div>
+          <div class="research-grid">
+            <article>
+              <h3>Market-aware</h3>
+              <p>
+                Good betting workflows compare model probabilities against prices. Research on betting efficiency suggests markets are tough, so this app focuses on edge detection, vig removal, and disciplined uncertainty.
+              </p>
+            </article>
+            <article>
+              <h3>Full bracket, not toy demo</h3>
+              <p>
+                Tournament probabilities change with path dependence. Full-field Monte Carlo simulation captures how one region path changes Final Four and title equity later.
+              </p>
+            </article>
+            <article>
+              <h3>Four Factors + efficiency</h3>
+              <p>
+                Adjusted efficiency plus the Four Factors remain strong baseline signals, which is why they anchor the model instead of being bolted on as afterthoughts.
+              </p>
+            </article>
+            <article>
+              <h3>Human override friendly</h3>
+              <p>
+                The model is editable because real workflows benefit from expert overrides for injuries, lineup changes, coaching edges, experience, and market dislocations that static academic models can miss.
+              </p>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
