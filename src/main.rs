@@ -6,7 +6,7 @@ use std::{
     env,
     net::SocketAddr,
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use axum::{
@@ -43,10 +43,10 @@ const STRATEGY_EVOLUTION_SEED: u64 = 20_260_320;
 const STRATEGY_EVOLUTION_POPULATION: usize = 42;
 const STRATEGY_EVOLUTION_GENERATIONS: usize = 16;
 
-#[derive(Clone)]
 struct AppState {
     db_path: PathBuf,
     http: Client,
+    jobs: Mutex<HashMap<String, BackgroundJobRecord>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,6 +60,12 @@ struct StoredState {
     portfolio: serde_json::Value,
     #[serde(default)]
     tournament: serde_json::Value,
+    #[serde(default)]
+    prediction_log: serde_json::Value,
+    #[serde(default)]
+    ai_prefill: serde_json::Value,
+    #[serde(default)]
+    optimizer_settings: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -190,7 +196,7 @@ struct PredictionTeam {
     continuity: f64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ModelWeights {
     efficiency: f64,
@@ -214,8 +220,62 @@ struct HistoricalSeasonData {
 struct BacktestResponse {
     methodology: String,
     caveats: Vec<String>,
+    weights_used: ModelWeights,
     aggregate: BacktestAggregate,
     years: Vec<BacktestYear>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScoreBacktestResponse {
+    methodology: String,
+    caveats: Vec<String>,
+    weights_used: ModelWeights,
+    aggregate: ScoreBacktestAggregate,
+    years: Vec<ScoreBacktestYear>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScoreBacktestAggregate {
+    years_covered: usize,
+    games_graded: usize,
+    winner_accuracy: f64,
+    team_score_mae: f64,
+    team_score_rmse: f64,
+    margin_mae: f64,
+    margin_rmse: f64,
+    total_mae: f64,
+    total_rmse: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScoreBacktestYear {
+    year: i32,
+    games_graded: usize,
+    winner_accuracy: f64,
+    team_score_mae: f64,
+    team_score_rmse: f64,
+    margin_mae: f64,
+    margin_rmse: f64,
+    total_mae: f64,
+    total_rmse: f64,
+    rounds: Vec<ScoreRoundResult>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScoreRoundResult {
+    label: String,
+    games: usize,
+    winner_accuracy: f64,
+    team_score_mae: f64,
+    team_score_rmse: f64,
+    margin_mae: f64,
+    margin_rmse: f64,
+    total_mae: f64,
+    total_rmse: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -227,6 +287,9 @@ struct BacktestAggregate {
     overall_accuracy: f64,
     average_brier: f64,
     champion_hits: usize,
+    no_lookahead_correct_picks: usize,
+    no_lookahead_total_games: usize,
+    no_lookahead_accuracy: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -241,6 +304,10 @@ struct BacktestYear {
     overall_accuracy: f64,
     average_brier: f64,
     rounds: Vec<RoundResult>,
+    no_lookahead_correct_picks: usize,
+    no_lookahead_total_games: usize,
+    no_lookahead_accuracy: f64,
+    no_lookahead_rounds: Vec<RoundResult>,
 }
 
 #[derive(Debug, Serialize)]
@@ -258,6 +325,7 @@ struct EvolutionResponse {
     methodology: String,
     caution: String,
     defaults: ModelWeights,
+    anchor_weights: ModelWeights,
     recommended_weights: ModelWeights,
     holdout_average_accuracy: f64,
     holdout_average_brier: f64,
@@ -265,9 +333,11 @@ struct EvolutionResponse {
     evaluated_seasons_brier: f64,
     generations: usize,
     population_size: usize,
+    restarts: usize,
     candidates: Vec<EvolutionCandidate>,
     fold_summaries: Vec<EvolutionFoldSummary>,
     meta_signals: Vec<String>,
+    promotion_review: ModelPromotionReview,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -304,6 +374,7 @@ struct StrategyEvolutionResponse {
     evaluated_seasons_drawdown: f64,
     generations: usize,
     population_size: usize,
+    restarts: usize,
     candidates: Vec<StrategyCandidate>,
     fold_summaries: Vec<StrategyFoldSummary>,
     meta_signals: Vec<String>,
@@ -334,6 +405,66 @@ struct StrategyFoldSummary {
     holdout_bets: usize,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OverlayReviewRequest {
+    current_profile: StrategyProfile,
+    candidate_profile: StrategyProfile,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OverlayReviewMetrics {
+    holdout_average_roi: f64,
+    holdout_average_log_growth: f64,
+    holdout_average_drawdown: f64,
+    holdout_average_bets: f64,
+    worst_year_roi: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OverlayReviewResponse {
+    methodology: String,
+    caution: String,
+    current_profile: StrategyProfile,
+    candidate_profile: StrategyProfile,
+    current_metrics: OverlayReviewMetrics,
+    candidate_metrics: OverlayReviewMetrics,
+    delta_roi: f64,
+    delta_log_growth: f64,
+    delta_drawdown: f64,
+    promote: bool,
+    gate_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelPromotionMetrics {
+    holdout_average_accuracy: f64,
+    holdout_average_brier: f64,
+    holdout_average_team_score_mae: f64,
+    holdout_average_margin_mae: f64,
+    worst_holdout_accuracy: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelPromotionReview {
+    methodology: String,
+    caution: String,
+    current_weights: ModelWeights,
+    candidate_weights: ModelWeights,
+    current_metrics: ModelPromotionMetrics,
+    candidate_metrics: ModelPromotionMetrics,
+    delta_accuracy: f64,
+    delta_brier: f64,
+    delta_team_score_mae: f64,
+    delta_margin_mae: f64,
+    promote: bool,
+    gate_reasons: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EvolutionCandidate {
@@ -361,6 +492,24 @@ struct EvolutionFoldSummary {
 struct RoundAccumulator {
     correct: usize,
     total: usize,
+}
+
+#[derive(Debug, Default, Clone)]
+struct ScoreMetricAccumulator {
+    games: usize,
+    winner_correct: usize,
+    team_score_abs_sum: f64,
+    team_score_sq_sum: f64,
+    margin_abs_sum: f64,
+    margin_sq_sum: f64,
+    total_abs_sum: f64,
+    total_sq_sum: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScoreProjection {
+    team_a_points: f64,
+    team_b_points: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -447,7 +596,7 @@ struct TournamentFeedTeam {
     region: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AiPrefillRequest {
     teams: Vec<AiPrefillTeamInput>,
@@ -457,6 +606,162 @@ struct AiPrefillRequest {
     team_signals: Vec<LiveTeamSignal>,
     #[serde(default)]
     focus_team_names: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiStrategyRequest {
+    current_profile: StrategyProfile,
+    bankroll: AiStrategyBankrollInput,
+    current_round: AiStrategyRoundInput,
+    #[serde(default)]
+    live_context: AiStrategyLiveContextInput,
+    #[serde(default)]
+    ai_assessments: Vec<AiTeamAssessment>,
+    #[serde(default)]
+    validation: AiStrategyValidationInput,
+    #[serde(default)]
+    feedback_loop: AiStrategyFeedbackInput,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiStrategyBankrollInput {
+    starting_bankroll: f64,
+    available_cash: f64,
+    open_risk: f64,
+    risk_budget_left: f64,
+    open_bets: usize,
+    settled_bets: usize,
+    realized_pnl: f64,
+    roi: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiStrategyRoundInput {
+    round_label: String,
+    open_matchups: usize,
+    #[serde(default)]
+    top_recommendations: Vec<AiStrategyTopRecommendation>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OptimizerRunRequest {
+    population_size: Option<usize>,
+    generations: Option<usize>,
+    restarts: Option<usize>,
+    current_weights: Option<ModelWeights>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoricalWeightsRequest {
+    weights: Option<ModelWeights>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EvolutionRunConfig {
+    population_size: usize,
+    generations: usize,
+    restarts: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StrategyRunConfig {
+    population_size: usize,
+    generations: usize,
+    restarts: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobLaunchResponse {
+    job_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackgroundJobRecord {
+    id: String,
+    kind: String,
+    status: String,
+    progress: f64,
+    message: String,
+    created_at: String,
+    updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiStrategyTopRecommendation {
+    team: String,
+    opponent: String,
+    edge_pct: f64,
+    confidence: f64,
+    market_ml: i32,
+    fair_ml: i32,
+    hedge_style: HedgeStyle,
+    projected_margin: f64,
+    projected_total: f64,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiStrategyLiveContextInput {
+    odds_configured: bool,
+    odds_matched_games: usize,
+    news_configured: bool,
+    article_count: usize,
+    signal_count: usize,
+    #[serde(default)]
+    strongest_signals: Vec<AiStrategySignalSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiStrategySignalSummary {
+    team_name: String,
+    suggested_injuries: f64,
+    confidence: f64,
+    article_count: usize,
+    summary: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiStrategyValidationInput {
+    backtest_accuracy: Option<f64>,
+    average_brier: Option<f64>,
+    score_team_mae: Option<f64>,
+    score_margin_mae: Option<f64>,
+    score_total_mae: Option<f64>,
+    strategy_recommended_profile: Option<StrategyProfile>,
+    strategy_holdout_roi: Option<f64>,
+    strategy_holdout_drawdown: Option<f64>,
+    evolution_caution: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiStrategyFeedbackInput {
+    tracked_bets: usize,
+    settled_bets: usize,
+    open_bets: usize,
+    avg_clv_prob_delta: Option<f64>,
+    positive_clv_rate: Option<f64>,
+    avg_reward_score: Option<f64>,
+    peak_drawdown: f64,
+    candidate_profile: Option<StrategyProfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -498,6 +803,31 @@ struct AiPrefillResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct AiStrategyResponse {
+    provider: AiProviderStatus,
+    generated_at: String,
+    model: Option<String>,
+    fallback_used: bool,
+    recommendation: AiStrategyRecommendation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiStrategyRecommendation {
+    profile: StrategyProfile,
+    auto_refresh_minutes: i32,
+    live_odds_mode: String,
+    auto_sync: bool,
+    auto_apply_news: bool,
+    confidence: f64,
+    risk_posture: String,
+    summary: String,
+    reasons: Vec<String>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AiProviderStatus {
     configured: bool,
     available: bool,
@@ -534,6 +864,11 @@ struct AiTeamAssessment {
 #[derive(Debug, Deserialize)]
 struct AiPrefillModelOutput {
     assessments: Vec<AiTeamAssessment>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AiStrategyModelOutput {
+    recommendation: AiStrategyRecommendation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -702,6 +1037,125 @@ struct TeamSignalAccumulator {
     latest_article_published_at: Option<String>,
 }
 
+impl EvolutionRunConfig {
+    fn from_request(request: OptimizerRunRequest) -> Self {
+        Self {
+            population_size: request.population_size.unwrap_or(96).clamp(24, 256),
+            generations: request.generations.unwrap_or(30).clamp(8, 80),
+            restarts: request.restarts.unwrap_or(3).clamp(1, 8),
+        }
+    }
+
+    fn legacy_defaults() -> Self {
+        Self {
+            population_size: EVOLUTION_POPULATION,
+            generations: EVOLUTION_GENERATIONS,
+            restarts: 1,
+        }
+    }
+}
+
+impl StrategyRunConfig {
+    fn from_request(request: OptimizerRunRequest) -> Self {
+        Self {
+            population_size: request.population_size.unwrap_or(84).clamp(24, 256),
+            generations: request.generations.unwrap_or(28).clamp(8, 80),
+            restarts: request.restarts.unwrap_or(3).clamp(1, 8),
+        }
+    }
+
+    fn legacy_defaults() -> Self {
+        Self {
+            population_size: STRATEGY_EVOLUTION_POPULATION,
+            generations: STRATEGY_EVOLUTION_GENERATIONS,
+            restarts: 1,
+        }
+    }
+}
+
+fn timestamp_now() -> String {
+    Utc::now().to_rfc3339()
+}
+
+fn create_job_record(
+    state: &Arc<AppState>,
+    kind: &str,
+    config: Option<serde_json::Value>,
+) -> BackgroundJobRecord {
+    let id = format!("job-{}", Utc::now().timestamp_micros());
+    let now = timestamp_now();
+    let job = BackgroundJobRecord {
+        id: id.clone(),
+        kind: kind.into(),
+        status: "queued".into(),
+        progress: 0.0,
+        message: "Queued".into(),
+        created_at: now.clone(),
+        updated_at: now,
+        result: None,
+        error: None,
+        config,
+    };
+
+    state
+        .jobs
+        .lock()
+        .expect("background jobs mutex poisoned")
+        .insert(id, job.clone());
+    job
+}
+
+fn update_job_progress(
+    state: &Arc<AppState>,
+    job_id: &str,
+    progress: f64,
+    message: impl Into<String>,
+) {
+    if let Some(job) = state
+        .jobs
+        .lock()
+        .expect("background jobs mutex poisoned")
+        .get_mut(job_id)
+    {
+        job.status = "running".into();
+        job.progress = progress.clamp(0.0, 1.0);
+        job.message = message.into();
+        job.updated_at = timestamp_now();
+    }
+}
+
+fn complete_job<T: Serialize>(state: &Arc<AppState>, job_id: &str, result: &T) -> Result<(), ApiError> {
+    if let Some(job) = state
+        .jobs
+        .lock()
+        .expect("background jobs mutex poisoned")
+        .get_mut(job_id)
+    {
+        job.status = "completed".into();
+        job.progress = 1.0;
+        job.message = "Completed".into();
+        job.updated_at = timestamp_now();
+        job.result = Some(serde_json::to_value(result).map_err(ApiError::Json)?);
+        job.error = None;
+    }
+    Ok(())
+}
+
+fn fail_job(state: &Arc<AppState>, job_id: &str, error: &ApiError) {
+    if let Some(job) = state
+        .jobs
+        .lock()
+        .expect("background jobs mutex poisoned")
+        .get_mut(job_id)
+    {
+        job.status = "failed".into();
+        job.progress = 1.0;
+        job.message = "Failed".into();
+        job.updated_at = timestamp_now();
+        job.error = Some(format!("{error:?}"));
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let _ = dotenvy::dotenv();
@@ -714,17 +1168,28 @@ async fn main() {
         .build()
         .expect("http client");
 
-    let state = Arc::new(AppState { db_path, http });
+    let state = Arc::new(AppState {
+        db_path,
+        http,
+        jobs: Mutex::new(HashMap::new()),
+    });
     let api_routes = Router::new()
         .route("/state", get(get_state).put(put_state).delete(delete_state))
         .route("/season/:year", get(get_season))
-        .route("/backtest", get(get_backtest))
+        .route("/backtest", get(get_backtest).post(post_backtest))
+        .route("/score-backtest", get(get_score_backtest).post(post_score_backtest))
         .route("/evolution", get(get_evolution))
         .route("/strategy-evolution", get(get_strategy_evolution))
+        .route("/jobs/:id", get(get_job_status))
+        .route("/jobs/evolution", post(post_evolution_job))
+        .route("/jobs/strategy-evolution", post(post_strategy_evolution_job))
+        .route("/jobs/ai-prefill", post(post_ai_prefill_job))
+        .route("/overlay-review", post(post_overlay_review))
         .route("/provider-status", get(get_provider_status))
         .route("/tournament/sync", post(post_tournament_sync))
         .route("/live/context", post(post_live_context))
         .route("/ai/prefill", post(post_ai_prefill))
+        .route("/ai/strategy", post(post_ai_strategy))
         .with_state(state);
 
     let app = Router::new()
@@ -778,7 +1243,32 @@ async fn get_season(
 }
 
 async fn get_backtest(State(state): State<Arc<AppState>>) -> Result<Json<BacktestResponse>, ApiError> {
-    let results = run_backtests(&state.http).await?;
+    let results = run_backtests(&state.http, &default_model_weights()).await?;
+    Ok(Json(results))
+}
+
+async fn get_score_backtest(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ScoreBacktestResponse>, ApiError> {
+    let results = run_score_backtests(&state.http, &default_model_weights()).await?;
+    Ok(Json(results))
+}
+
+async fn post_backtest(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<HistoricalWeightsRequest>,
+) -> Result<Json<BacktestResponse>, ApiError> {
+    let weights = requested_model_weights(payload.weights);
+    let results = run_backtests(&state.http, &weights).await?;
+    Ok(Json(results))
+}
+
+async fn post_score_backtest(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<HistoricalWeightsRequest>,
+) -> Result<Json<ScoreBacktestResponse>, ApiError> {
+    let weights = requested_model_weights(payload.weights);
+    let results = run_score_backtests(&state.http, &weights).await?;
     Ok(Json(results))
 }
 
@@ -791,6 +1281,119 @@ async fn get_strategy_evolution(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<StrategyEvolutionResponse>, ApiError> {
     let results = run_strategy_evolution(&state.http).await?;
+    Ok(Json(results))
+}
+
+async fn get_job_status(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<BackgroundJobRecord>, ApiError> {
+    let job = state
+        .jobs
+        .lock()
+        .expect("background jobs mutex poisoned")
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| ApiError::Parse(format!("Unknown background job {id}")))?;
+    Ok(Json(job))
+}
+
+async fn post_evolution_job(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<OptimizerRunRequest>,
+) -> Result<Json<JobLaunchResponse>, ApiError> {
+    let anchor_weights = requested_model_weights(payload.current_weights);
+    let config = EvolutionRunConfig::from_request(payload.clone());
+    let config_value = serde_json::json!({
+        "populationSize": config.population_size,
+        "generations": config.generations,
+        "restarts": config.restarts,
+        "currentWeights": anchor_weights,
+    });
+    let job = create_job_record(&state, "evolution", Some(config_value));
+    let state_clone = state.clone();
+    let job_id = job.id.clone();
+
+    tokio::spawn(async move {
+        match run_evolution_with_config(&state_clone.http, config, anchor_weights, |progress, message| {
+            update_job_progress(&state_clone, &job_id, progress, message);
+        })
+        .await
+        {
+            Ok(result) => {
+                if let Err(error) = complete_job(&state_clone, &job_id, &result) {
+                    fail_job(&state_clone, &job_id, &error);
+                }
+            }
+            Err(error) => fail_job(&state_clone, &job_id, &error),
+        }
+    });
+
+    Ok(Json(JobLaunchResponse { job_id: job.id }))
+}
+
+async fn post_strategy_evolution_job(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<OptimizerRunRequest>,
+) -> Result<Json<JobLaunchResponse>, ApiError> {
+    let config = StrategyRunConfig::from_request(payload);
+    let config_value = serde_json::to_value(config).map_err(ApiError::Json)?;
+    let job = create_job_record(&state, "strategyEvolution", Some(config_value));
+    let state_clone = state.clone();
+    let job_id = job.id.clone();
+
+    tokio::spawn(async move {
+        match run_strategy_evolution_with_config(&state_clone.http, config, |progress, message| {
+            update_job_progress(&state_clone, &job_id, progress, message);
+        })
+        .await
+        {
+            Ok(result) => {
+                if let Err(error) = complete_job(&state_clone, &job_id, &result) {
+                    fail_job(&state_clone, &job_id, &error);
+                }
+            }
+            Err(error) => fail_job(&state_clone, &job_id, &error),
+        }
+    });
+
+    Ok(Json(JobLaunchResponse { job_id: job.id }))
+}
+
+async fn post_ai_prefill_job(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AiPrefillRequest>,
+) -> Result<Json<JobLaunchResponse>, ApiError> {
+    let config = serde_json::json!({
+        "focusTeamCount": payload.focus_team_names.len(),
+        "articleCount": payload.articles.len(),
+        "teamSignalCount": payload.team_signals.len(),
+    });
+    let job = create_job_record(&state, "aiPrefill", Some(config));
+    let state_clone = state.clone();
+    let job_id = job.id.clone();
+
+    tokio::spawn(async move {
+        update_job_progress(&state_clone, &job_id, 0.1, "Preparing researched AI prefill");
+        match fetch_ai_prefill(&state_clone.http, payload).await {
+            Ok(result) => {
+                update_job_progress(&state_clone, &job_id, 0.95, "Caching researched AI output");
+                if let Err(error) = complete_job(&state_clone, &job_id, &result) {
+                    fail_job(&state_clone, &job_id, &error);
+                }
+            }
+            Err(error) => fail_job(&state_clone, &job_id, &error),
+        }
+    });
+
+    Ok(Json(JobLaunchResponse { job_id: job.id }))
+}
+
+async fn post_overlay_review(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<OverlayReviewRequest>,
+) -> Result<Json<OverlayReviewResponse>, ApiError> {
+    let results = run_overlay_review(&state.http, payload).await?;
     Ok(Json(results))
 }
 
@@ -817,6 +1420,13 @@ async fn post_ai_prefill(
     Json(payload): Json<AiPrefillRequest>,
 ) -> Result<Json<AiPrefillResponse>, ApiError> {
     Ok(Json(fetch_ai_prefill(&state.http, payload).await?))
+}
+
+async fn post_ai_strategy(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AiStrategyRequest>,
+) -> Result<Json<AiStrategyResponse>, ApiError> {
+    Ok(Json(fetch_ai_strategy(&state.http, payload).await?))
 }
 
 async fn fetch_official_2026_season(client: &Client) -> Result<SeasonResponse, ApiError> {
@@ -887,15 +1497,31 @@ fn default_model_weights() -> ModelWeights {
     }
 }
 
+fn requested_model_weights(weights: Option<ModelWeights>) -> ModelWeights {
+    weights.map(clamp_model_weights).unwrap_or_else(default_model_weights)
+}
+
 fn backtest_methodology() -> String {
-    "Historical backtests use official NCAA archived bracket pages for real matchups and outcomes. Because archived NCAA bracket-IQ team-stat feeds returned 404 for 2021-2024 during verification on March 19, 2026, those seasons currently use the app's seed-based proxy ratings rather than full archived NCAA stats.".into()
+    "Historical backtests now report a no-lookahead bracket-start replay as the main accuracy line: each season starts from the archived 64-team field, the model advances its own predicted winners forward to create future rounds, and those frozen slot winners are graded only after the real tournament outcomes are known. A secondary round-replay accuracy is still included for matchup-level calibration context. Because archived NCAA bracket-IQ team-stat feeds returned 404 for 2021-2024 during verification on March 19, 2026, those seasons currently use the app's seed-based proxy ratings rather than full archived NCAA stats.".into()
 }
 
 fn backtest_caveats() -> Vec<String> {
     vec![
         "Coverage currently includes 2021-2024 because NCAA's 2025 bracket archive endpoint resolves to the live 2026 bracket page.".into(),
-        "Backtest accuracy is useful for structural sanity checks, but it is not yet a full historical replay of live injuries, betting markets, or news context.".into(),
+        "No-lookahead replay removes future-matchup leakage, but it still does not recreate historical injuries, betting markets, or news context.".into(),
         "The live 2026 season uses official NCAA team stats; archived seasons currently do not.".into(),
+    ]
+}
+
+fn score_backtest_methodology() -> String {
+    "Score replays freeze each archived matchup before grading it: the model projects the pregame winner probability, margin, total, and team scores using only the historical field lookup and round context, then compares that frozen snapshot to the actual final score after the fact. That keeps the score audit chronological instead of quietly letting later information leak backward.".into()
+}
+
+fn score_backtest_caveats() -> Vec<String> {
+    vec![
+        "Archived score replays currently use the app's seed-based proxy ratings rather than full archived NCAA stat snapshots, because archived NCAA bracket-IQ team-stat feeds returned 404 for 2021-2024 during verification on March 19, 2026.".into(),
+        "These score metrics grade a possession-based baseline projection. More simulations reduce bracket noise, but they do not change a frozen score estimate after tipoff.".into(),
+        "Round-by-round summaries use the archived NCAA matchup tree and final scores, but they do not yet replay historical injuries, line movement, or news overlays.".into(),
     ]
 }
 
@@ -983,6 +1609,7 @@ fn evaluate_historical_season(
             accuracy: ratio(acc.correct, acc.total),
         })
         .collect::<Vec<_>>();
+    let no_lookahead = evaluate_no_lookahead_bracket_start(season, weights)?;
 
     Ok(BacktestYear {
         year: season.year,
@@ -994,22 +1621,29 @@ fn evaluate_historical_season(
         overall_accuracy: ratio(correct, season.bracket.games.len()),
         average_brier: brier_sum / season.bracket.games.len() as f64,
         rounds: round_results,
+        no_lookahead_correct_picks: no_lookahead.correct_picks,
+        no_lookahead_total_games: no_lookahead.total_games,
+        no_lookahead_accuracy: ratio(no_lookahead.correct_picks, no_lookahead.total_games),
+        no_lookahead_rounds: no_lookahead.rounds,
     })
 }
 
-async fn run_backtests(client: &Client) -> Result<BacktestResponse, ApiError> {
+async fn run_backtests(client: &Client, weights: &ModelWeights) -> Result<BacktestResponse, ApiError> {
     let seasons = load_historical_seasons(client).await?;
-    let weights = default_model_weights();
     let mut years = Vec::with_capacity(seasons.len());
     let mut total_correct = 0usize;
     let mut total_games = 0usize;
     let mut champion_hits = 0usize;
     let mut brier_total = 0.0;
+    let mut total_no_lookahead_correct = 0usize;
+    let mut total_no_lookahead_games = 0usize;
 
     for season in &seasons {
         let year_result = evaluate_historical_season(season, &weights)?;
         total_correct += year_result.correct_picks;
         total_games += year_result.total_games;
+        total_no_lookahead_correct += year_result.no_lookahead_correct_picks;
+        total_no_lookahead_games += year_result.no_lookahead_total_games;
         if year_result.champion_hit {
             champion_hits += 1;
         }
@@ -1020,6 +1654,7 @@ async fn run_backtests(client: &Client) -> Result<BacktestResponse, ApiError> {
     Ok(BacktestResponse {
         methodology: backtest_methodology(),
         caveats: backtest_caveats(),
+        weights_used: *weights,
         aggregate: BacktestAggregate {
             years_covered: years.len(),
             correct_picks: total_correct,
@@ -1027,6 +1662,428 @@ async fn run_backtests(client: &Client) -> Result<BacktestResponse, ApiError> {
             overall_accuracy: ratio(total_correct, total_games),
             average_brier: brier_total / years.len() as f64,
             champion_hits,
+            no_lookahead_correct_picks: total_no_lookahead_correct,
+            no_lookahead_total_games: total_no_lookahead_games,
+            no_lookahead_accuracy: ratio(total_no_lookahead_correct, total_no_lookahead_games),
+        },
+        years,
+    })
+}
+
+#[derive(Debug)]
+struct NoLookaheadBacktestResult {
+    correct_picks: usize,
+    total_games: usize,
+    rounds: Vec<RoundResult>,
+}
+
+fn evaluate_no_lookahead_bracket_start(
+    season: &HistoricalSeasonData,
+    weights: &ModelWeights,
+) -> Result<NoLookaheadBacktestResult, ApiError> {
+    let mut rounds = BTreeMap::new();
+    let mut predicted_region_winners = Vec::with_capacity(REGION_ORDER.len());
+    let mut actual_region_winners = Vec::with_capacity(REGION_ORDER.len());
+
+    for region in REGION_ORDER {
+        let first_round_games = region_first_round_games(&season.bracket.games, region)?;
+        let mut predicted_winners = Vec::with_capacity(first_round_games.len());
+        let mut actual_winners = Vec::with_capacity(first_round_games.len());
+
+        for game in first_round_games {
+            let predicted = predicted_winner(game, &season.lookup, 0, weights)?;
+            let actual = actual_winner_name(game).to_string();
+            record_round_pick(&mut rounds, 0, &predicted.name, &actual);
+            predicted_winners.push(predicted);
+            actual_winners.push(actual);
+        }
+
+        for round_index in 1..=3 {
+            let round_games = season
+                .bracket
+                .games
+                .iter()
+                .filter(|game| game.round_index == round_index && game.region == region)
+                .collect::<Vec<_>>();
+
+            let mut next_predicted = Vec::with_capacity(predicted_winners.len() / 2);
+            let mut next_actual = Vec::with_capacity(actual_winners.len() / 2);
+
+            for (predicted_pair, actual_pair) in predicted_winners
+                .chunks(2)
+                .zip(actual_winners.chunks(2))
+            {
+                if predicted_pair.len() != 2 || actual_pair.len() != 2 {
+                    return Err(ApiError::Parse(format!(
+                        "Invalid {region} replay pairing in round {} for {}",
+                        round_index + 1,
+                        season.year
+                    )));
+                }
+
+                let predicted = predicted_winner_from_teams(
+                    &predicted_pair[0],
+                    &predicted_pair[1],
+                    round_index,
+                    weights,
+                );
+                let actual_game = find_game_by_teams(&round_games, &actual_pair[0], &actual_pair[1])
+                    .ok_or_else(|| {
+                        ApiError::Parse(format!(
+                            "Missing {region} {} game between {} and {} in {}",
+                            round_label(round_index),
+                            actual_pair[0],
+                            actual_pair[1],
+                            season.year
+                        ))
+                    })?;
+                let actual = actual_winner_name(actual_game).to_string();
+                record_round_pick(&mut rounds, round_index, &predicted.name, &actual);
+                next_predicted.push(predicted);
+                next_actual.push(actual);
+            }
+
+            predicted_winners = next_predicted;
+            actual_winners = next_actual;
+        }
+
+        let predicted_region_winner = predicted_winners.into_iter().next().ok_or_else(|| {
+            ApiError::Parse(format!("Missing predicted regional champion for {region} in {}", season.year))
+        })?;
+        let actual_region_winner = actual_winners.into_iter().next().ok_or_else(|| {
+            ApiError::Parse(format!("Missing actual regional champion for {region} in {}", season.year))
+        })?;
+        predicted_region_winners.push(predicted_region_winner);
+        actual_region_winners.push(actual_region_winner);
+    }
+
+    let semifinal_pairs = infer_semifinal_region_pairs(&season.bracket.games, &actual_region_winners)?;
+    let semifinal_games = season
+        .bracket
+        .games
+        .iter()
+        .filter(|game| game.round_index == 4)
+        .collect::<Vec<_>>();
+    if semifinal_games.len() != 2 {
+        return Err(ApiError::Parse(format!(
+            "Expected 2 semifinal games in {}, found {}",
+            season.year,
+            semifinal_games.len()
+        )));
+    }
+
+    let mut predicted_semifinal_winners = Vec::with_capacity(semifinal_pairs.len());
+    let mut actual_semifinal_winners = Vec::with_capacity(semifinal_pairs.len());
+    for (left, right) in semifinal_pairs {
+        let predicted_semifinal = predicted_winner_from_teams(
+            &predicted_region_winners[left],
+            &predicted_region_winners[right],
+            4,
+            weights,
+        );
+        let actual_semifinal = find_game_by_teams(
+            &semifinal_games,
+            &actual_region_winners[left],
+            &actual_region_winners[right],
+        )
+        .ok_or_else(|| {
+            ApiError::Parse(format!(
+                "Missing semifinal game between {} and {} in {}",
+                actual_region_winners[left], actual_region_winners[right], season.year
+            ))
+        })?;
+        let actual_semifinal_winner = actual_winner_name(actual_semifinal).to_string();
+        record_round_pick(
+            &mut rounds,
+            4,
+            &predicted_semifinal.name,
+            &actual_semifinal_winner,
+        );
+        predicted_semifinal_winners.push(predicted_semifinal);
+        actual_semifinal_winners.push(actual_semifinal_winner);
+    }
+
+    let title_games = season
+        .bracket
+        .games
+        .iter()
+        .filter(|game| game.round_index == 5)
+        .collect::<Vec<_>>();
+    if title_games.len() != 1 {
+        return Err(ApiError::Parse(format!(
+            "Expected 1 title game in {}, found {}",
+            season.year,
+            title_games.len()
+        )));
+    }
+
+    let predicted_champion = predicted_winner_from_teams(
+        &predicted_semifinal_winners[0],
+        &predicted_semifinal_winners[1],
+        5,
+        weights,
+    );
+    let actual_title = find_game_by_teams(
+        &title_games,
+        &actual_semifinal_winners[0],
+        &actual_semifinal_winners[1],
+    )
+    .ok_or_else(|| {
+        ApiError::Parse(format!(
+            "Missing title game between {} and {} in {}",
+            actual_semifinal_winners[0], actual_semifinal_winners[1], season.year
+        ))
+    })?;
+    let actual_champion = actual_winner_name(actual_title).to_string();
+    record_round_pick(&mut rounds, 5, &predicted_champion.name, &actual_champion);
+
+    let round_results = rounds
+        .into_iter()
+        .map(|(round_index, acc)| RoundResult {
+            label: round_label(round_index).into(),
+            correct: acc.correct,
+            total: acc.total,
+            accuracy: ratio(acc.correct, acc.total),
+        })
+        .collect::<Vec<_>>();
+    let correct_picks = round_results.iter().map(|round| round.correct).sum::<usize>();
+    let total_games = round_results.iter().map(|round| round.total).sum::<usize>();
+
+    Ok(NoLookaheadBacktestResult {
+        correct_picks,
+        total_games,
+        rounds: round_results,
+    })
+}
+
+fn estimate_pace(team: &PredictionTeam) -> f64 {
+    clamp(71.0 - (team.seed as f64 - 8.0) * 0.22, 63.0, 76.0)
+}
+
+fn project_score(team_a: &PredictionTeam, team_b: &PredictionTeam) -> ScoreProjection {
+    let pace = (estimate_pace(team_a) + estimate_pace(team_b)) / 2.0;
+    let team_a_points = pace * ((team_a.adj_o + team_b.adj_d) / 2.0) / 100.0;
+    let team_b_points = pace * ((team_b.adj_o + team_a.adj_d) / 2.0) / 100.0;
+
+    ScoreProjection {
+        team_a_points,
+        team_b_points,
+    }
+}
+
+fn record_score_metrics(
+    accumulator: &mut ScoreMetricAccumulator,
+    projection: ScoreProjection,
+    actual_team_a: i32,
+    actual_team_b: i32,
+    winner_correct: bool,
+) {
+    let actual_team_a = actual_team_a as f64;
+    let actual_team_b = actual_team_b as f64;
+    let predicted_margin = projection.team_a_points - projection.team_b_points;
+    let actual_margin = actual_team_a - actual_team_b;
+    let predicted_total = projection.team_a_points + projection.team_b_points;
+    let actual_total = actual_team_a + actual_team_b;
+    let error_a = projection.team_a_points - actual_team_a;
+    let error_b = projection.team_b_points - actual_team_b;
+    let margin_error = predicted_margin - actual_margin;
+    let total_error = predicted_total - actual_total;
+
+    accumulator.games += 1;
+    if winner_correct {
+        accumulator.winner_correct += 1;
+    }
+    accumulator.team_score_abs_sum += error_a.abs() + error_b.abs();
+    accumulator.team_score_sq_sum += error_a.powi(2) + error_b.powi(2);
+    accumulator.margin_abs_sum += margin_error.abs();
+    accumulator.margin_sq_sum += margin_error.powi(2);
+    accumulator.total_abs_sum += total_error.abs();
+    accumulator.total_sq_sum += total_error.powi(2);
+}
+
+fn team_score_mae(accumulator: &ScoreMetricAccumulator) -> f64 {
+    if accumulator.games == 0 {
+        0.0
+    } else {
+        accumulator.team_score_abs_sum / (accumulator.games as f64 * 2.0)
+    }
+}
+
+fn team_score_rmse(accumulator: &ScoreMetricAccumulator) -> f64 {
+    if accumulator.games == 0 {
+        0.0
+    } else {
+        (accumulator.team_score_sq_sum / (accumulator.games as f64 * 2.0)).sqrt()
+    }
+}
+
+fn margin_mae(accumulator: &ScoreMetricAccumulator) -> f64 {
+    if accumulator.games == 0 {
+        0.0
+    } else {
+        accumulator.margin_abs_sum / accumulator.games as f64
+    }
+}
+
+fn margin_rmse(accumulator: &ScoreMetricAccumulator) -> f64 {
+    if accumulator.games == 0 {
+        0.0
+    } else {
+        (accumulator.margin_sq_sum / accumulator.games as f64).sqrt()
+    }
+}
+
+fn total_mae(accumulator: &ScoreMetricAccumulator) -> f64 {
+    if accumulator.games == 0 {
+        0.0
+    } else {
+        accumulator.total_abs_sum / accumulator.games as f64
+    }
+}
+
+fn total_rmse(accumulator: &ScoreMetricAccumulator) -> f64 {
+    if accumulator.games == 0 {
+        0.0
+    } else {
+        (accumulator.total_sq_sum / accumulator.games as f64).sqrt()
+    }
+}
+
+fn evaluate_historical_score_season(
+    season: &HistoricalSeasonData,
+    weights: &ModelWeights,
+) -> Result<ScoreBacktestYear, ApiError> {
+    let mut aggregate = ScoreMetricAccumulator::default();
+    let mut rounds = BTreeMap::new();
+
+    for game in &season.bracket.games {
+        let (Some(actual_team_a), Some(actual_team_b)) = (game.team_a.score, game.team_b.score) else {
+            continue;
+        };
+
+        let team_a = season
+            .lookup
+            .get(&normalize_team_name(&game.team_a.name))
+            .ok_or_else(|| {
+                ApiError::Parse(format!(
+                    "Missing proxy team for {} in {}",
+                    game.team_a.name, season.year
+                ))
+            })?;
+        let team_b = season
+            .lookup
+            .get(&normalize_team_name(&game.team_b.name))
+            .ok_or_else(|| {
+                ApiError::Parse(format!(
+                    "Missing proxy team for {} in {}",
+                    game.team_b.name, season.year
+                ))
+            })?;
+
+        let probability_a = blended_probability(team_a, team_b, game.round_index, weights);
+        let winner_correct = if probability_a >= 0.5 {
+            game.team_a.won
+        } else {
+            game.team_b.won
+        };
+        let projection = project_score(team_a, team_b);
+
+        record_score_metrics(
+            &mut aggregate,
+            projection,
+            actual_team_a,
+            actual_team_b,
+            winner_correct,
+        );
+
+        let round = rounds
+            .entry(game.round_index)
+            .or_insert_with(ScoreMetricAccumulator::default);
+        record_score_metrics(round, projection, actual_team_a, actual_team_b, winner_correct);
+    }
+
+    let round_results = rounds
+        .into_iter()
+        .map(|(round_index, metrics)| ScoreRoundResult {
+            label: round_label(round_index).into(),
+            games: metrics.games,
+            winner_accuracy: ratio(metrics.winner_correct, metrics.games),
+            team_score_mae: team_score_mae(&metrics),
+            team_score_rmse: team_score_rmse(&metrics),
+            margin_mae: margin_mae(&metrics),
+            margin_rmse: margin_rmse(&metrics),
+            total_mae: total_mae(&metrics),
+            total_rmse: total_rmse(&metrics),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(ScoreBacktestYear {
+        year: season.year,
+        games_graded: aggregate.games,
+        winner_accuracy: ratio(aggregate.winner_correct, aggregate.games),
+        team_score_mae: team_score_mae(&aggregate),
+        team_score_rmse: team_score_rmse(&aggregate),
+        margin_mae: margin_mae(&aggregate),
+        margin_rmse: margin_rmse(&aggregate),
+        total_mae: total_mae(&aggregate),
+        total_rmse: total_rmse(&aggregate),
+        rounds: round_results,
+    })
+}
+
+async fn run_score_backtests(client: &Client, weights: &ModelWeights) -> Result<ScoreBacktestResponse, ApiError> {
+    let seasons = load_historical_seasons(client).await?;
+    let mut years = Vec::with_capacity(seasons.len());
+    let mut games_graded = 0usize;
+    let mut winner_correct = 0usize;
+    let mut team_score_abs_sum = 0.0;
+    let mut team_score_sq_sum = 0.0;
+    let mut margin_abs_sum = 0.0;
+    let mut margin_sq_sum = 0.0;
+    let mut total_abs_sum = 0.0;
+    let mut total_sq_sum = 0.0;
+
+    for season in &seasons {
+        let year_result = evaluate_historical_score_season(season, &weights)?;
+        games_graded += year_result.games_graded;
+        winner_correct += year_result
+            .winner_accuracy
+            .mul_add(year_result.games_graded as f64, 0.0)
+            .round() as usize;
+        team_score_abs_sum += year_result.team_score_mae * year_result.games_graded as f64 * 2.0;
+        team_score_sq_sum += year_result.team_score_rmse.powi(2) * year_result.games_graded as f64 * 2.0;
+        margin_abs_sum += year_result.margin_mae * year_result.games_graded as f64;
+        margin_sq_sum += year_result.margin_rmse.powi(2) * year_result.games_graded as f64;
+        total_abs_sum += year_result.total_mae * year_result.games_graded as f64;
+        total_sq_sum += year_result.total_rmse.powi(2) * year_result.games_graded as f64;
+        years.push(year_result);
+    }
+
+    let aggregate = ScoreMetricAccumulator {
+        games: games_graded,
+        winner_correct,
+        team_score_abs_sum,
+        team_score_sq_sum,
+        margin_abs_sum,
+        margin_sq_sum,
+        total_abs_sum,
+        total_sq_sum,
+    };
+
+    Ok(ScoreBacktestResponse {
+        methodology: score_backtest_methodology(),
+        caveats: score_backtest_caveats(),
+        weights_used: *weights,
+        aggregate: ScoreBacktestAggregate {
+            years_covered: years.len(),
+            games_graded,
+            winner_accuracy: ratio(aggregate.winner_correct, aggregate.games),
+            team_score_mae: team_score_mae(&aggregate),
+            team_score_rmse: team_score_rmse(&aggregate),
+            margin_mae: margin_mae(&aggregate),
+            margin_rmse: margin_rmse(&aggregate),
+            total_mae: total_mae(&aggregate),
+            total_rmse: total_rmse(&aggregate),
         },
         years,
     })
@@ -1044,16 +2101,70 @@ struct GenomeScore {
 }
 
 async fn run_evolution(client: &Client) -> Result<EvolutionResponse, ApiError> {
+    run_evolution_with_config(
+        client,
+        EvolutionRunConfig::legacy_defaults(),
+        default_model_weights(),
+        |_, _| {},
+    )
+    .await
+}
+
+async fn run_evolution_with_config<F>(
+    client: &Client,
+    config: EvolutionRunConfig,
+    anchor_weights: ModelWeights,
+    mut on_progress: F,
+) -> Result<EvolutionResponse, ApiError>
+where
+    F: FnMut(f64, String),
+{
+    on_progress(0.02, "Loading archived seasons".into());
     let seasons = load_historical_seasons(client).await?;
     let defaults = default_model_weights();
+    let mut leaderboard = Vec::new();
 
-    let mut rng = StdRng::seed_from_u64(EVOLUTION_SEED);
-    let leaderboard = evolve_population(&seasons, EVOLUTION_POPULATION, EVOLUTION_GENERATIONS, &mut rng)?;
+    for restart in 0..config.restarts {
+        let mut rng = StdRng::seed_from_u64(EVOLUTION_SEED + restart as u64 * 97);
+        let phase_start = 0.08 + (restart as f64 / config.restarts as f64) * 0.52;
+        let phase_span = 0.52 / config.restarts as f64;
+        let mut restart_progress = |generation_completed: usize, generation_total: usize| {
+            let generation_ratio = generation_completed as f64 / generation_total.max(1) as f64;
+            on_progress(
+                phase_start + phase_span * generation_ratio,
+                format!(
+                    "Evolution restart {}/{} · generation {}/{}",
+                    restart + 1,
+                    config.restarts,
+                    generation_completed,
+                    generation_total
+                ),
+            );
+        };
+        let board = evolve_population_with_progress(
+            &seasons,
+            &anchor_weights,
+            config.population_size,
+            config.generations,
+            &mut rng,
+            &mut restart_progress,
+        )?;
+        leaderboard.extend(board.into_iter().take(8));
+    }
+    leaderboard.sort_by(compare_genome_scores);
 
     let mut fold_summaries = Vec::with_capacity(seasons.len());
     let mut fold_winners = Vec::with_capacity(seasons.len());
     let mut holdout_accuracy_total = 0.0;
     let mut holdout_brier_total = 0.0;
+    let mut current_holdout_accuracy_total = 0.0;
+    let mut current_holdout_brier_total = 0.0;
+    let mut current_holdout_team_score_mae_total = 0.0;
+    let mut current_holdout_margin_mae_total = 0.0;
+    let mut current_worst_holdout_accuracy = f64::INFINITY;
+    let mut candidate_holdout_team_score_mae_total = 0.0;
+    let mut candidate_holdout_margin_mae_total = 0.0;
+    let mut candidate_worst_holdout_accuracy = f64::INFINITY;
 
     for holdout_index in 0..seasons.len() {
         let mut train = Vec::with_capacity(seasons.len().saturating_sub(1));
@@ -1067,42 +2178,89 @@ async fn run_evolution(client: &Client) -> Result<EvolutionResponse, ApiError> {
         let mut fold_rng = StdRng::seed_from_u64(EVOLUTION_SEED + holdout.year as u64);
         let fold_board = evolve_population(
             &train,
-            EVOLUTION_POPULATION.saturating_sub(12).max(24),
-            EVOLUTION_GENERATIONS.saturating_sub(4).max(10),
+            &anchor_weights,
+            config.population_size.saturating_sub(18).max(24),
+            config.generations.saturating_sub(6).max(10),
             &mut fold_rng,
         )?;
         let winner = fold_board
             .first()
             .ok_or_else(|| ApiError::Parse("Evolution fold returned no candidates".into()))?;
         let holdout_result = evaluate_historical_season(holdout, &winner.weights)?;
+        let holdout_score_result = evaluate_historical_score_season(holdout, &winner.weights)?;
+        let current_holdout_result = evaluate_historical_season(holdout, &anchor_weights)?;
+        let current_holdout_score_result =
+            evaluate_historical_score_season(holdout, &anchor_weights)?;
 
-        holdout_accuracy_total += holdout_result.overall_accuracy;
+        holdout_accuracy_total += holdout_result.no_lookahead_accuracy;
         holdout_brier_total += holdout_result.average_brier;
+        candidate_holdout_team_score_mae_total += holdout_score_result.team_score_mae;
+        candidate_holdout_margin_mae_total += holdout_score_result.margin_mae;
+        candidate_worst_holdout_accuracy =
+            candidate_worst_holdout_accuracy.min(holdout_result.no_lookahead_accuracy);
+        current_holdout_accuracy_total += current_holdout_result.no_lookahead_accuracy;
+        current_holdout_brier_total += current_holdout_result.average_brier;
+        current_holdout_team_score_mae_total += current_holdout_score_result.team_score_mae;
+        current_holdout_margin_mae_total += current_holdout_score_result.margin_mae;
+        current_worst_holdout_accuracy =
+            current_worst_holdout_accuracy.min(current_holdout_result.no_lookahead_accuracy);
         fold_winners.push(winner.weights);
         fold_summaries.push(EvolutionFoldSummary {
             holdout_year: holdout.year,
             train_years: train.iter().map(|season| season.year).collect(),
             selected_weights: winner.weights,
-            holdout_accuracy: holdout_result.overall_accuracy,
+            holdout_accuracy: holdout_result.no_lookahead_accuracy,
             holdout_brier: holdout_result.average_brier,
         });
+        on_progress(
+            0.66 + ((holdout_index + 1) as f64 / seasons.len().max(1) as f64) * 0.26,
+            format!("Evolution holdout {}/{}", holdout_index + 1, seasons.len()),
+        );
     }
 
     let median_fold_weights = median_weights(&fold_winners);
-    let recommended_weights = shrink_toward_defaults(&defaults, &median_fold_weights, 0.58);
-    let evaluated = evaluate_genome(&seasons, &recommended_weights)?;
+    let recommended_weights = shrink_toward_anchor(&anchor_weights, &median_fold_weights, 0.58);
+    let evaluated = evaluate_genome(&seasons, &recommended_weights, &anchor_weights)?;
+    let season_count = fold_summaries.len().max(1) as f64;
+    let current_metrics = ModelPromotionMetrics {
+        holdout_average_accuracy: current_holdout_accuracy_total / season_count,
+        holdout_average_brier: current_holdout_brier_total / season_count,
+        holdout_average_team_score_mae: current_holdout_team_score_mae_total / season_count,
+        holdout_average_margin_mae: current_holdout_margin_mae_total / season_count,
+        worst_holdout_accuracy: if current_worst_holdout_accuracy.is_finite() {
+            current_worst_holdout_accuracy
+        } else {
+            0.0
+        },
+    };
+    let candidate_metrics = ModelPromotionMetrics {
+        holdout_average_accuracy: holdout_accuracy_total / season_count,
+        holdout_average_brier: holdout_brier_total / season_count,
+        holdout_average_team_score_mae: candidate_holdout_team_score_mae_total / season_count,
+        holdout_average_margin_mae: candidate_holdout_margin_mae_total / season_count,
+        worst_holdout_accuracy: if candidate_worst_holdout_accuracy.is_finite() {
+            candidate_worst_holdout_accuracy
+        } else {
+            0.0
+        },
+    };
+    let promotion_review =
+        build_model_promotion_review(anchor_weights, recommended_weights, &current_metrics, &candidate_metrics);
+    on_progress(0.97, "Finalizing evolved weights".into());
 
     Ok(EvolutionResponse {
-        methodology: "The evolution lab searches a bounded family of weight profiles against archived NCAA tournaments, then uses leave-one-year-out folds plus shrinkage back toward the default model before recommending anything for the live season. That keeps the system learning from history without letting one strange March rewrite the whole model.".into(),
+        methodology: "The evolution lab now anchors itself to the live weight profile, searches a bounded family of historical calibrations around that profile, and then uses leave-one-year-out folds plus shrinkage back toward the live model before recommending anything for the current season. That lets history refine the forecast without turning one strange March into a full reset.".into(),
         caution: "Archived seasons still use proxy team ratings rather than full archived NCAA stat snapshots, so these learned weights should be treated as conservative meta-guidance, not a fully autonomous retrain. Market blend is intentionally left untouched because historical line snapshots are not yet in the backtest dataset.".into(),
         defaults,
+        anchor_weights,
         recommended_weights,
         holdout_average_accuracy: holdout_accuracy_total / fold_summaries.len() as f64,
         holdout_average_brier: holdout_brier_total / fold_summaries.len() as f64,
         evaluated_seasons_accuracy: evaluated.average_accuracy,
         evaluated_seasons_brier: evaluated.average_brier,
-        generations: EVOLUTION_GENERATIONS,
-        population_size: EVOLUTION_POPULATION,
+        generations: config.generations,
+        population_size: config.population_size,
+        restarts: config.restarts,
         candidates: leaderboard
             .into_iter()
             .take(5)
@@ -1119,23 +2277,39 @@ async fn run_evolution(client: &Client) -> Result<EvolutionResponse, ApiError> {
             })
             .collect(),
         fold_summaries,
-        meta_signals: build_meta_signals(&fold_winners, &defaults, &recommended_weights),
+        meta_signals: build_meta_signals(&fold_winners, &anchor_weights, &defaults, &recommended_weights),
+        promotion_review,
     })
 }
 
 fn evolve_population(
     seasons: &[HistoricalSeasonData],
+    anchor: &ModelWeights,
     population_size: usize,
     generations: usize,
     rng: &mut StdRng,
 ) -> Result<Vec<GenomeScore>, ApiError> {
+    evolve_population_with_progress(seasons, anchor, population_size, generations, rng, &mut |_, _| {})
+}
+
+fn evolve_population_with_progress<F>(
+    seasons: &[HistoricalSeasonData],
+    anchor: &ModelWeights,
+    population_size: usize,
+    generations: usize,
+    rng: &mut StdRng,
+    on_generation: &mut F,
+) -> Result<Vec<GenomeScore>, ApiError>
+where
+    F: FnMut(usize, usize),
+{
     let defaults = default_model_weights();
-    let mut population = initialize_population(population_size, &defaults, rng);
+    let mut population = initialize_population(population_size, anchor, &defaults, generations, rng);
 
     for generation in 0..generations {
         let mut scored = population
             .iter()
-            .map(|weights| evaluate_genome(seasons, weights))
+            .map(|weights| evaluate_genome(seasons, weights, anchor))
             .collect::<Result<Vec<_>, _>>()?;
         scored.sort_by(compare_genome_scores);
 
@@ -1159,22 +2333,32 @@ fn evolve_population(
         }
 
         population = next_population;
+        on_generation(generation + 1, generations);
     }
 
     let mut scored = population
         .iter()
-        .map(|weights| evaluate_genome(seasons, weights))
+        .map(|weights| evaluate_genome(seasons, weights, anchor))
         .collect::<Result<Vec<_>, _>>()?;
     scored.sort_by(compare_genome_scores);
     Ok(scored)
 }
 
-fn initialize_population(population_size: usize, defaults: &ModelWeights, rng: &mut StdRng) -> Vec<ModelWeights> {
+fn initialize_population(
+    population_size: usize,
+    anchor: &ModelWeights,
+    defaults: &ModelWeights,
+    generations: usize,
+    rng: &mut StdRng,
+) -> Vec<ModelWeights> {
     let mut population = Vec::with_capacity(population_size);
-    population.push(*defaults);
+    population.push(*anchor);
+    if population_size > 1 && distance_between_weights(anchor, defaults) > 0.001 {
+        population.push(*defaults);
+    }
 
     while population.len() < population_size {
-        population.push(mutate_weights(defaults, rng, 0, EVOLUTION_GENERATIONS));
+        population.push(mutate_weights(anchor, rng, 0, generations));
     }
 
     population
@@ -1229,7 +2413,11 @@ fn clamp_model_weights(weights: ModelWeights) -> ModelWeights {
     }
 }
 
-fn evaluate_genome(seasons: &[HistoricalSeasonData], weights: &ModelWeights) -> Result<GenomeScore, ApiError> {
+fn evaluate_genome(
+    seasons: &[HistoricalSeasonData],
+    weights: &ModelWeights,
+    anchor: &ModelWeights,
+) -> Result<GenomeScore, ApiError> {
     let defaults = default_model_weights();
     let year_results = seasons
         .iter()
@@ -1238,7 +2426,7 @@ fn evaluate_genome(seasons: &[HistoricalSeasonData], weights: &ModelWeights) -> 
 
     let accuracies = year_results
         .iter()
-        .map(|result| result.overall_accuracy)
+        .map(|result| result.no_lookahead_accuracy)
         .collect::<Vec<_>>();
     let briers = year_results
         .iter()
@@ -1252,12 +2440,14 @@ fn evaluate_genome(seasons: &[HistoricalSeasonData], weights: &ModelWeights) -> 
         .copied()
         .fold(f64::INFINITY, f64::min);
     let brier_stddev = stddev(&briers);
+    let distance_from_anchor = distance_between_weights(weights, anchor);
     let distance_from_defaults = distance_from_defaults(weights, &defaults);
     let fitness = (-average_brier * 100.0)
         + (average_accuracy * 28.0)
         + (worst_year_accuracy * 8.0)
         - (brier_stddev * 55.0)
-        - (distance_from_defaults * 3.0);
+        - (distance_from_anchor * 4.5)
+        - (distance_from_defaults * 1.5);
 
     Ok(GenomeScore {
         weights: *weights,
@@ -1317,6 +2507,20 @@ fn distance_from_defaults(weights: &ModelWeights, defaults: &ModelWeights) -> f6
     deltas.iter().map(|delta| delta.abs()).sum::<f64>() / deltas.len() as f64
 }
 
+fn distance_between_weights(a: &ModelWeights, b: &ModelWeights) -> f64 {
+    let deltas = [
+        (a.efficiency - b.efficiency) / b.efficiency.max(1.0),
+        (a.seed - b.seed) / b.seed.max(1.0),
+        (a.four_factors - b.four_factors) / b.four_factors.max(1.0),
+        (a.momentum - b.momentum) / b.momentum.max(1.0),
+        (a.injuries - b.injuries) / b.injuries.max(1.0),
+        (a.soft_factors - b.soft_factors) / b.soft_factors.max(1.0),
+        (a.uncertainty - b.uncertainty) / b.uncertainty.max(1.0),
+    ];
+
+    deltas.iter().map(|delta| delta.abs()).sum::<f64>() / deltas.len() as f64
+}
+
 fn median_weights(weights: &[ModelWeights]) -> ModelWeights {
     ModelWeights {
         efficiency: median_by(weights, |item| item.efficiency),
@@ -1345,28 +2549,35 @@ where
     }
 }
 
-fn shrink_toward_defaults(defaults: &ModelWeights, evolved: &ModelWeights, evolved_share: f64) -> ModelWeights {
-    let keep_default = 1.0 - evolved_share;
+fn shrink_toward_anchor(anchor: &ModelWeights, evolved: &ModelWeights, evolved_share: f64) -> ModelWeights {
+    let keep_anchor = 1.0 - evolved_share;
     clamp_model_weights(ModelWeights {
-        efficiency: defaults.efficiency * keep_default + evolved.efficiency * evolved_share,
-        seed: defaults.seed * keep_default + evolved.seed * evolved_share,
-        four_factors: defaults.four_factors * keep_default + evolved.four_factors * evolved_share,
-        momentum: defaults.momentum * keep_default + evolved.momentum * evolved_share,
-        injuries: defaults.injuries * keep_default + evolved.injuries * evolved_share,
-        soft_factors: defaults.soft_factors * keep_default + evolved.soft_factors * evolved_share,
-        uncertainty: defaults.uncertainty * keep_default + evolved.uncertainty * evolved_share,
+        efficiency: anchor.efficiency * keep_anchor + evolved.efficiency * evolved_share,
+        seed: anchor.seed * keep_anchor + evolved.seed * evolved_share,
+        four_factors: anchor.four_factors * keep_anchor + evolved.four_factors * evolved_share,
+        momentum: anchor.momentum * keep_anchor + evolved.momentum * evolved_share,
+        injuries: anchor.injuries * keep_anchor + evolved.injuries * evolved_share,
+        soft_factors: anchor.soft_factors * keep_anchor + evolved.soft_factors * evolved_share,
+        uncertainty: anchor.uncertainty * keep_anchor + evolved.uncertainty * evolved_share,
     })
 }
 
 fn build_meta_signals(
     fold_winners: &[ModelWeights],
+    anchor: &ModelWeights,
     defaults: &ModelWeights,
     recommended: &ModelWeights,
 ) -> Vec<String> {
     let mut signals = vec![
         "Market blend is deliberately excluded from evolution because the archived backtest dataset does not yet include trustworthy historical closing lines.".into(),
-        "Recommended weights are shrunk back toward the default profile after fold testing so the live model learns slowly instead of chasing one hot tournament.".into(),
+        "Recommended weights are shrunk back toward the live profile after fold testing so the forecast learns slowly instead of chasing one hot tournament.".into(),
     ];
+
+    if distance_between_weights(anchor, recommended) > 0.12 {
+        signals.push("Historical calibration wanted a meaningful change from the current live profile, but the final recommendation is still range-limited before promotion.".into());
+    } else {
+        signals.push("Historical calibration only found a small adjustment around the current live profile, which is a good sign that the model is staying stable.".into());
+    }
 
     let axes = [
         ("efficiency", "efficiency", defaults.efficiency, recommended.efficiency),
@@ -1426,6 +2637,129 @@ fn build_meta_signals(
     signals
 }
 
+fn build_model_promotion_review(
+    current_weights: ModelWeights,
+    candidate_weights: ModelWeights,
+    current_metrics: &ModelPromotionMetrics,
+    candidate_metrics: &ModelPromotionMetrics,
+) -> ModelPromotionReview {
+    let delta_accuracy =
+        candidate_metrics.holdout_average_accuracy - current_metrics.holdout_average_accuracy;
+    let delta_brier =
+        candidate_metrics.holdout_average_brier - current_metrics.holdout_average_brier;
+    let delta_team_score_mae = candidate_metrics.holdout_average_team_score_mae
+        - current_metrics.holdout_average_team_score_mae;
+    let delta_margin_mae =
+        candidate_metrics.holdout_average_margin_mae - current_metrics.holdout_average_margin_mae;
+
+    let mut gate_reasons = Vec::new();
+    let mut promote = true;
+
+    if delta_accuracy >= 0.003 {
+        gate_reasons.push(format!(
+            "Candidate improved holdout no-lookahead accuracy from {:.1}% to {:.1}%.",
+            current_metrics.holdout_average_accuracy * 100.0,
+            candidate_metrics.holdout_average_accuracy * 100.0
+        ));
+    } else if delta_accuracy >= -0.001 {
+        gate_reasons.push(format!(
+            "Candidate stayed within the accuracy tolerance band: {:.1}% vs {:.1}%.",
+            candidate_metrics.holdout_average_accuracy * 100.0,
+            current_metrics.holdout_average_accuracy * 100.0
+        ));
+    } else {
+        gate_reasons.push(format!(
+            "Candidate lost too much holdout accuracy: {:.1}% vs {:.1}%.",
+            candidate_metrics.holdout_average_accuracy * 100.0,
+            current_metrics.holdout_average_accuracy * 100.0
+        ));
+        promote = false;
+    }
+
+    if delta_brier <= -0.0015 {
+        gate_reasons.push(format!(
+            "Candidate improved holdout Brier from {:.3} to {:.3}.",
+            current_metrics.holdout_average_brier,
+            candidate_metrics.holdout_average_brier
+        ));
+    } else if delta_brier <= 0.0008 {
+        gate_reasons.push(format!(
+            "Candidate kept Brier within the tolerance band: {:.3} vs {:.3}.",
+            candidate_metrics.holdout_average_brier,
+            current_metrics.holdout_average_brier
+        ));
+    } else {
+        gate_reasons.push(format!(
+            "Candidate worsened holdout Brier too much: {:.3} vs {:.3}.",
+            candidate_metrics.holdout_average_brier,
+            current_metrics.holdout_average_brier
+        ));
+        promote = false;
+    }
+
+    if delta_team_score_mae <= 0.35 {
+        gate_reasons.push(format!(
+            "Candidate kept team-score MAE in range: {:.1} vs {:.1}.",
+            candidate_metrics.holdout_average_team_score_mae,
+            current_metrics.holdout_average_team_score_mae
+        ));
+    } else {
+        gate_reasons.push(format!(
+            "Candidate made score calibration too much worse: {:.1} vs {:.1}.",
+            candidate_metrics.holdout_average_team_score_mae,
+            current_metrics.holdout_average_team_score_mae
+        ));
+        promote = false;
+    }
+
+    if delta_margin_mae <= 0.35 {
+        gate_reasons.push(format!(
+            "Candidate kept margin MAE in range: {:.1} vs {:.1}.",
+            candidate_metrics.holdout_average_margin_mae,
+            current_metrics.holdout_average_margin_mae
+        ));
+    } else {
+        gate_reasons.push(format!(
+            "Candidate made margin error too much worse: {:.1} vs {:.1}.",
+            candidate_metrics.holdout_average_margin_mae,
+            current_metrics.holdout_average_margin_mae
+        ));
+        promote = false;
+    }
+
+    if candidate_metrics.worst_holdout_accuracy + 0.015
+        >= current_metrics.worst_holdout_accuracy
+    {
+        gate_reasons.push(format!(
+            "Candidate did not materially worsen the worst holdout year: {:.1}% vs {:.1}%.",
+            candidate_metrics.worst_holdout_accuracy * 100.0,
+            current_metrics.worst_holdout_accuracy * 100.0
+        ));
+    } else {
+        gate_reasons.push(format!(
+            "Candidate made the worst holdout year too much worse: {:.1}% vs {:.1}%.",
+            candidate_metrics.worst_holdout_accuracy * 100.0,
+            current_metrics.worst_holdout_accuracy * 100.0
+        ));
+        promote = false;
+    }
+
+    ModelPromotionReview {
+        methodology: "The model promotion gate compares the current live weights to a historically calibrated candidate on one holdout season at a time. It only promotes if the candidate clears accuracy and Brier gates, stays within score-error tolerances, and does not materially worsen the weakest holdout season.".into(),
+        caution: "This is still a conservative paper-model gate built on proxy historical team ratings rather than perfect archived stat snapshots, so a pass means 'safe enough to try live' instead of 'guaranteed future improvement.'".into(),
+        current_weights,
+        candidate_weights,
+        current_metrics: current_metrics.clone(),
+        candidate_metrics: candidate_metrics.clone(),
+        delta_accuracy,
+        delta_brier,
+        delta_team_score_mae,
+        delta_margin_mae,
+        promote,
+        gate_reasons,
+    }
+}
+
 fn default_strategy_profile() -> StrategyProfile {
     StrategyProfile {
         min_edge_pct: 2.0,
@@ -1439,8 +2773,6 @@ fn default_strategy_profile() -> StrategyProfile {
 
 #[derive(Debug, Clone)]
 struct StrategySeasonResult {
-    year: i32,
-    ending_bankroll: f64,
     roi: f64,
     log_growth: f64,
     max_drawdown: f64,
@@ -1470,7 +2802,6 @@ struct HistoricalBetCandidate {
 
 #[derive(Debug, Clone, Copy)]
 struct HedgePlan {
-    hedge_stake: f64,
     total_outlay: f64,
     if_pick_wins: f64,
     if_hedge_wins: f64,
@@ -1478,17 +2809,51 @@ struct HedgePlan {
 }
 
 async fn run_strategy_evolution(client: &Client) -> Result<StrategyEvolutionResponse, ApiError> {
+    run_strategy_evolution_with_config(client, StrategyRunConfig::legacy_defaults(), |_, _| {}).await
+}
+
+async fn run_strategy_evolution_with_config<F>(
+    client: &Client,
+    config: StrategyRunConfig,
+    mut on_progress: F,
+) -> Result<StrategyEvolutionResponse, ApiError>
+where
+    F: FnMut(f64, String),
+{
+    on_progress(0.02, "Loading archived seasons".into());
     let seasons = load_historical_seasons(client).await?;
     let weights = default_model_weights();
     let defaults = default_strategy_profile();
-    let mut rng = StdRng::seed_from_u64(STRATEGY_EVOLUTION_SEED);
-    let leaderboard = evolve_strategy_population(
-        &seasons,
-        &weights,
-        STRATEGY_EVOLUTION_POPULATION,
-        STRATEGY_EVOLUTION_GENERATIONS,
-        &mut rng,
-    )?;
+    let mut leaderboard = Vec::new();
+
+    for restart in 0..config.restarts {
+        let mut rng = StdRng::seed_from_u64(STRATEGY_EVOLUTION_SEED + restart as u64 * 97);
+        let phase_start = 0.08 + (restart as f64 / config.restarts as f64) * 0.52;
+        let phase_span = 0.52 / config.restarts as f64;
+        let mut restart_progress = |generation_completed: usize, generation_total: usize| {
+            let generation_ratio = generation_completed as f64 / generation_total.max(1) as f64;
+            on_progress(
+                phase_start + phase_span * generation_ratio,
+                format!(
+                    "Strategy restart {}/{} · generation {}/{}",
+                    restart + 1,
+                    config.restarts,
+                    generation_completed,
+                    generation_total
+                ),
+            );
+        };
+        let board = evolve_strategy_population_with_progress(
+            &seasons,
+            &weights,
+            config.population_size,
+            config.generations,
+            &mut rng,
+            &mut restart_progress,
+        )?;
+        leaderboard.extend(board.into_iter().take(8));
+    }
+    leaderboard.sort_by(compare_strategy_scores);
 
     let mut fold_summaries = Vec::with_capacity(seasons.len());
     let mut fold_winners = Vec::with_capacity(seasons.len());
@@ -1509,8 +2874,8 @@ async fn run_strategy_evolution(client: &Client) -> Result<StrategyEvolutionResp
         let fold_board = evolve_strategy_population(
             &train,
             &weights,
-            STRATEGY_EVOLUTION_POPULATION.saturating_sub(10).max(24),
-            STRATEGY_EVOLUTION_GENERATIONS.saturating_sub(4).max(10),
+            config.population_size.saturating_sub(16).max(24),
+            config.generations.saturating_sub(6).max(10),
             &mut fold_rng,
         )?;
         let winner = fold_board
@@ -1531,11 +2896,16 @@ async fn run_strategy_evolution(client: &Client) -> Result<StrategyEvolutionResp
             holdout_drawdown: holdout_result.max_drawdown,
             holdout_bets: holdout_result.bets_placed,
         });
+        on_progress(
+            0.66 + ((holdout_index + 1) as f64 / seasons.len().max(1) as f64) * 0.26,
+            format!("Strategy holdout {}/{}", holdout_index + 1, seasons.len()),
+        );
     }
 
     let median_profile = median_strategy_profile(&fold_winners);
     let recommended_profile = shrink_strategy_toward_defaults(&defaults, &median_profile, 0.62);
     let evaluated = evaluate_strategy_genome(&seasons, &weights, &recommended_profile)?;
+    on_progress(0.97, "Finalizing evolved strategy".into());
 
     Ok(StrategyEvolutionResponse {
         methodology: "The strategy lab keeps the base model fixed, then evolves bankroll and bet-selection profiles across archived NCAA tournaments. It searches edge thresholds, Kelly scaling, stake caps, open-risk caps, confidence gates, and hedge style, then validates them with leave-one-year-out folds before recommending anything for the live board.".into(),
@@ -1548,8 +2918,9 @@ async fn run_strategy_evolution(client: &Client) -> Result<StrategyEvolutionResp
         evaluated_seasons_roi: evaluated.average_roi,
         evaluated_seasons_log_growth: evaluated.average_log_growth,
         evaluated_seasons_drawdown: evaluated.average_drawdown,
-        generations: STRATEGY_EVOLUTION_GENERATIONS,
-        population_size: STRATEGY_EVOLUTION_POPULATION,
+        generations: config.generations,
+        population_size: config.population_size,
+        restarts: config.restarts,
         candidates: leaderboard
             .into_iter()
             .take(5)
@@ -1570,6 +2941,143 @@ async fn run_strategy_evolution(client: &Client) -> Result<StrategyEvolutionResp
     })
 }
 
+async fn run_overlay_review(
+    client: &Client,
+    payload: OverlayReviewRequest,
+) -> Result<OverlayReviewResponse, ApiError> {
+    let seasons = load_historical_seasons(client).await?;
+    let weights = default_model_weights();
+    let current_profile = clamp_strategy_profile(payload.current_profile);
+    let candidate_profile = clamp_strategy_profile(payload.candidate_profile);
+    let current_metrics = evaluate_overlay_profile_holdouts(&seasons, &weights, &current_profile)?;
+    let candidate_metrics = evaluate_overlay_profile_holdouts(&seasons, &weights, &candidate_profile)?;
+    let delta_roi = candidate_metrics.holdout_average_roi - current_metrics.holdout_average_roi;
+    let delta_log_growth =
+        candidate_metrics.holdout_average_log_growth - current_metrics.holdout_average_log_growth;
+    let delta_drawdown =
+        candidate_metrics.holdout_average_drawdown - current_metrics.holdout_average_drawdown;
+
+    let mut gate_reasons = Vec::new();
+    let mut promote = true;
+
+    if delta_log_growth > 0.003 {
+        gate_reasons.push(format!(
+            "Candidate improved average holdout log growth from {:.3} to {:.3}.",
+            current_metrics.holdout_average_log_growth,
+            candidate_metrics.holdout_average_log_growth
+        ));
+    } else {
+        gate_reasons.push(format!(
+            "Candidate did not clear the minimum log-growth lift gate: {:.3} vs {:.3}.",
+            candidate_metrics.holdout_average_log_growth,
+            current_metrics.holdout_average_log_growth
+        ));
+        promote = false;
+    }
+
+    if delta_roi > 0.01 {
+        gate_reasons.push(format!(
+            "Candidate improved average holdout ROI from {:.1}% to {:.1}%.",
+            current_metrics.holdout_average_roi * 100.0,
+            candidate_metrics.holdout_average_roi * 100.0
+        ));
+    } else {
+        gate_reasons.push(format!(
+            "Candidate ROI lift was too small to promote safely: {:.1}% vs {:.1}%.",
+            candidate_metrics.holdout_average_roi * 100.0,
+            current_metrics.holdout_average_roi * 100.0
+        ));
+        promote = false;
+    }
+
+    if delta_drawdown <= 0.015 {
+        gate_reasons.push(format!(
+            "Candidate kept drawdown within the tolerance band: {:.1}% vs {:.1}%.",
+            candidate_metrics.holdout_average_drawdown * 100.0,
+            current_metrics.holdout_average_drawdown * 100.0
+        ));
+    } else {
+        gate_reasons.push(format!(
+            "Candidate increased average drawdown too much: {:.1}% vs {:.1}%.",
+            candidate_metrics.holdout_average_drawdown * 100.0,
+            current_metrics.holdout_average_drawdown * 100.0
+        ));
+        promote = false;
+    }
+
+    if candidate_metrics.holdout_average_bets >= 4.0 {
+        gate_reasons.push(format!(
+            "Candidate kept enough holdout action to be measurable: {:.1} average bets.",
+            candidate_metrics.holdout_average_bets
+        ));
+    } else {
+        gate_reasons.push(format!(
+            "Candidate traded too little on holdouts to trust the signal: {:.1} average bets.",
+            candidate_metrics.holdout_average_bets
+        ));
+        promote = false;
+    }
+
+    if candidate_metrics.worst_year_roi + 0.02 >= current_metrics.worst_year_roi {
+        gate_reasons.push(format!(
+            "Candidate did not meaningfully worsen the worst holdout year: {:.1}% vs {:.1}%.",
+            candidate_metrics.worst_year_roi * 100.0,
+            current_metrics.worst_year_roi * 100.0
+        ));
+    } else {
+        gate_reasons.push(format!(
+            "Candidate made the worst holdout year materially worse: {:.1}% vs {:.1}%.",
+            candidate_metrics.worst_year_roi * 100.0,
+            current_metrics.worst_year_roi * 100.0
+        ));
+        promote = false;
+    }
+
+    Ok(OverlayReviewResponse {
+        methodology: "The promotion gate replays the current overlay profile and the candidate overlay profile on archived seasons one holdout year at a time. It only allows promotion when the candidate improves holdout growth and ROI, stays within a drawdown tolerance, and still places enough bets to be meaningful.".into(),
+        caution: "This still uses proxy historical prices rather than true closing-line archives, so a pass here should be treated as a conservative approval gate for paper trading, not proof that the candidate will beat live markets.".into(),
+        current_profile,
+        candidate_profile,
+        current_metrics,
+        candidate_metrics,
+        delta_roi,
+        delta_log_growth,
+        delta_drawdown,
+        promote,
+        gate_reasons,
+    })
+}
+
+fn evaluate_overlay_profile_holdouts(
+    seasons: &[HistoricalSeasonData],
+    weights: &ModelWeights,
+    profile: &StrategyProfile,
+) -> Result<OverlayReviewMetrics, ApiError> {
+    let mut roi_total = 0.0;
+    let mut log_growth_total = 0.0;
+    let mut drawdown_total = 0.0;
+    let mut bets_total = 0.0;
+    let mut worst_year_roi = f64::INFINITY;
+
+    for season in seasons {
+        let result = evaluate_strategy_season(season, weights, profile)?;
+        roi_total += result.roi;
+        log_growth_total += result.log_growth;
+        drawdown_total += result.max_drawdown;
+        bets_total += result.bets_placed as f64;
+        worst_year_roi = worst_year_roi.min(result.roi);
+    }
+
+    let season_count = seasons.len().max(1) as f64;
+    Ok(OverlayReviewMetrics {
+        holdout_average_roi: roi_total / season_count,
+        holdout_average_log_growth: log_growth_total / season_count,
+        holdout_average_drawdown: drawdown_total / season_count,
+        holdout_average_bets: bets_total / season_count,
+        worst_year_roi: if worst_year_roi.is_finite() { worst_year_roi } else { 0.0 },
+    })
+}
+
 fn evolve_strategy_population(
     seasons: &[HistoricalSeasonData],
     weights: &ModelWeights,
@@ -1577,8 +3085,29 @@ fn evolve_strategy_population(
     generations: usize,
     rng: &mut StdRng,
 ) -> Result<Vec<StrategyGenomeScore>, ApiError> {
+    evolve_strategy_population_with_progress(
+        seasons,
+        weights,
+        population_size,
+        generations,
+        rng,
+        &mut |_, _| {},
+    )
+}
+
+fn evolve_strategy_population_with_progress<F>(
+    seasons: &[HistoricalSeasonData],
+    weights: &ModelWeights,
+    population_size: usize,
+    generations: usize,
+    rng: &mut StdRng,
+    on_generation: &mut F,
+) -> Result<Vec<StrategyGenomeScore>, ApiError>
+where
+    F: FnMut(usize, usize),
+{
     let defaults = default_strategy_profile();
-    let mut population = initialize_strategy_population(population_size, &defaults, rng);
+    let mut population = initialize_strategy_population(population_size, &defaults, generations, rng);
 
     for generation in 0..generations {
         let mut scored = population
@@ -1602,6 +3131,7 @@ fn evolve_strategy_population(
         }
 
         population = next_population;
+        on_generation(generation + 1, generations);
     }
 
     let mut scored = population
@@ -1615,6 +3145,7 @@ fn evolve_strategy_population(
 fn initialize_strategy_population(
     population_size: usize,
     defaults: &StrategyProfile,
+    generations: usize,
     rng: &mut StdRng,
 ) -> Vec<StrategyProfile> {
     let mut population = Vec::with_capacity(population_size);
@@ -1625,7 +3156,7 @@ fn initialize_strategy_population(
             defaults,
             rng,
             0,
-            STRATEGY_EVOLUTION_GENERATIONS,
+            generations,
         ));
     }
 
@@ -1751,10 +3282,10 @@ fn evaluate_strategy_season(
     weights: &ModelWeights,
     profile: &StrategyProfile,
 ) -> Result<StrategySeasonResult, ApiError> {
-    let starting_bankroll = 1_000.0;
-    let mut bankroll = starting_bankroll;
+    let starting_bankroll: f64 = 1_000.0;
+    let mut bankroll: f64 = starting_bankroll;
     let mut peak = bankroll;
-    let mut max_drawdown = 0.0;
+    let mut max_drawdown: f64 = 0.0;
     let mut bets_placed = 0usize;
 
     for round_index in 0..=5 {
@@ -1849,8 +3380,6 @@ fn evaluate_strategy_season(
     }
 
     Ok(StrategySeasonResult {
-        year: season.year,
-        ending_bankroll: bankroll,
         roi: (bankroll - starting_bankroll) / starting_bankroll,
         log_growth: if bankroll > 0.0 {
             (bankroll / starting_bankroll).ln()
@@ -1937,7 +3466,6 @@ fn build_strategy_hedge_plan(
         };
 
         HedgePlan {
-            hedge_stake: round2(hedge_stake.max(0.0)),
             total_outlay: round2(primary_stake + hedge_stake.max(0.0)),
             if_pick_wins: round2(if_pick_wins),
             if_hedge_wins: round2(if_hedge_wins),
@@ -2122,7 +3650,7 @@ fn shrink_strategy_toward_defaults(
 }
 
 fn build_strategy_meta_signals(
-    fold_winners: &[StrategyProfile],
+    _fold_winners: &[StrategyProfile],
     defaults: &StrategyProfile,
     recommended: &StrategyProfile,
 ) -> Vec<String> {
@@ -2472,6 +4000,304 @@ async fn fetch_ai_prefill(
         researched_teams,
         fallback_teams,
         assessments,
+    })
+}
+
+fn fallback_ai_strategy_recommendation(
+    payload: &AiStrategyRequest,
+    summary: &str,
+) -> AiStrategyRecommendation {
+    let mut profile = payload
+        .feedback_loop
+        .candidate_profile
+        .or(payload.validation.strategy_recommended_profile)
+        .unwrap_or(payload.current_profile);
+
+    if payload.feedback_loop.peak_drawdown > 0.14 || payload.bankroll.open_risk > payload.bankroll.risk_budget_left {
+        profile.kelly_multiplier *= 0.82;
+        profile.max_stake_pct -= 1.0;
+        profile.max_open_risk_pct -= 3.0;
+        profile.min_edge_pct += 0.4;
+        profile.min_confidence += 0.03;
+        profile.hedge_style = HedgeStyle::BreakEven;
+    } else if payload.feedback_loop.avg_reward_score.unwrap_or(0.0) > 0.01
+        && payload.feedback_loop.positive_clv_rate.unwrap_or(0.0) > 0.53
+    {
+        profile.kelly_multiplier *= 1.05;
+        profile.max_stake_pct += 0.5;
+        profile.max_open_risk_pct += 1.0;
+    }
+
+    if payload.live_context.signal_count > 0 && payload.live_context.news_configured {
+        profile.min_confidence += 0.02;
+    }
+
+    let profile = clamp_strategy_profile(profile);
+    let auto_refresh_minutes = if payload.current_round.open_matchups > 0 { 5 } else { 10 };
+    let auto_sync = payload.live_context.odds_configured || payload.live_context.news_configured;
+    let auto_apply_news = payload.live_context.news_configured && payload.live_context.signal_count > 0;
+    let live_odds_mode = if payload.live_context.odds_matched_games >= 2 {
+        "best"
+    } else {
+        "consensus"
+    };
+
+    let mut reasons = Vec::new();
+    reasons.push("Kept the recommendation close to the existing strategy profile because risk settings should move slowly.".into());
+    if payload.feedback_loop.peak_drawdown > 0.14 {
+        reasons.push("Peak drawdown was elevated, so the fallback tightened Kelly, stake size, and open-risk caps.".into());
+    }
+    if payload.live_context.signal_count > 0 {
+        reasons.push("Recent team-signal noise pushed the fallback toward a slightly higher confidence gate.".into());
+    }
+    if payload.validation.strategy_recommended_profile.is_some() {
+        reasons.push("Used the archived strategy-lab recommendation as a baseline anchor instead of inventing a new posture from scratch.".into());
+    }
+
+    AiStrategyRecommendation {
+        profile,
+        auto_refresh_minutes,
+        live_odds_mode: live_odds_mode.into(),
+        auto_sync,
+        auto_apply_news,
+        confidence: 0.42,
+        risk_posture: if profile.kelly_multiplier <= 0.25 {
+            "conservative".into()
+        } else if profile.kelly_multiplier >= 0.45 {
+            "aggressive".into()
+        } else {
+            "balanced".into()
+        },
+        summary: summary.into(),
+        reasons,
+        warnings: vec![
+            "Fallback mode was used, so this recommendation is heuristic rather than a fresh LLM synthesis.".into(),
+            "Starting bankroll is intentionally left to the user instead of being auto-set by the model.".into(),
+        ],
+    }
+}
+
+fn normalize_ai_strategy_recommendation(
+    recommendation: AiStrategyRecommendation,
+    fallback: &AiStrategyRecommendation,
+) -> AiStrategyRecommendation {
+    AiStrategyRecommendation {
+        profile: clamp_strategy_profile(recommendation.profile),
+        auto_refresh_minutes: recommendation.auto_refresh_minutes.clamp(1, 60),
+        live_odds_mode: if recommendation.live_odds_mode.eq_ignore_ascii_case("consensus") {
+            "consensus".into()
+        } else {
+            "best".into()
+        },
+        auto_sync: recommendation.auto_sync,
+        auto_apply_news: recommendation.auto_apply_news,
+        confidence: round2(clamp(recommendation.confidence, 0.0, 1.0)),
+        risk_posture: if recommendation.risk_posture.trim().is_empty() {
+            fallback.risk_posture.clone()
+        } else {
+            recommendation.risk_posture
+        },
+        summary: if recommendation.summary.trim().is_empty() {
+            fallback.summary.clone()
+        } else {
+            recommendation.summary
+        },
+        reasons: if recommendation.reasons.is_empty() {
+            fallback.reasons.clone()
+        } else {
+            recommendation.reasons
+        },
+        warnings: if recommendation.warnings.is_empty() {
+            fallback.warnings.clone()
+        } else {
+            recommendation.warnings
+        },
+    }
+}
+
+async fn fetch_ai_strategy(
+    client: &Client,
+    payload: AiStrategyRequest,
+) -> Result<AiStrategyResponse, ApiError> {
+    let generated_at = Utc::now().to_rfc3339();
+    let fallback = fallback_ai_strategy_recommendation(
+        &payload,
+        "Used local bankroll heuristics, strategy-lab anchors, and paper-bet telemetry because AI strategy synthesis was unavailable.",
+    );
+
+    let Ok(api_key) = env::var("OPENAI_API_KEY") else {
+        return Ok(AiStrategyResponse {
+            provider: AiProviderStatus {
+                configured: false,
+                available: false,
+                message: "Set OPENAI_API_KEY to let the app recommend bankroll and hedge settings from live context, research, and historical validation.".into(),
+                source_url: "https://developers.openai.com/api/reference/responses".into(),
+            },
+            generated_at,
+            model: None,
+            fallback_used: true,
+            recommendation: fallback,
+        });
+    };
+
+    if api_key.trim().is_empty() {
+        return Ok(AiStrategyResponse {
+            provider: AiProviderStatus {
+                configured: false,
+                available: false,
+                message: "OPENAI_API_KEY is empty, so AI betting-strategy recommendations are disabled.".into(),
+                source_url: "https://developers.openai.com/api/reference/responses".into(),
+            },
+            generated_at,
+            model: None,
+            fallback_used: true,
+            recommendation: fallback,
+        });
+    }
+
+    let model = env::var("OPENAI_STRATEGY_MODEL")
+        .or_else(|_| env::var("OPENAI_PREFILL_MODEL"))
+        .unwrap_or_else(|_| "gpt-5-mini".into());
+
+    let strategy_context = serde_json::json!({
+        "currentProfile": payload.current_profile,
+        "bankroll": payload.bankroll,
+        "currentRound": payload.current_round,
+        "liveContext": payload.live_context,
+        "topAiAssessments": payload.ai_assessments.into_iter().take(8).collect::<Vec<_>>(),
+        "validation": payload.validation,
+        "feedbackLoop": payload.feedback_loop
+    });
+
+    let system_prompt = "You are a conservative NCAA tournament bankroll and hedge strategist. Recommend only overlay settings such as Kelly scaling, stake caps, open-risk caps, minimum edge, minimum confidence, hedge style, auto-refresh, odds mode, auto-sync, and auto-apply-news. Do not invent the user's bankroll size. Use the supplied validation, score-replay, live context, research, and paper-bet telemetry. Prefer small changes, drawdown control, and no-lookahead discipline. Return valid JSON only.";
+    let user_prompt = format!(
+        "Recommend betting settings as of {} for this paper-trading system. Stay close to the current profile unless the evidence is strong. Explain the recommendation in plain English and list the main reasons plus cautions.\n\n{}",
+        Utc::now().format("%B %-d, %Y"),
+        serde_json::to_string_pretty(&strategy_context).map_err(ApiError::Json)?
+    );
+
+    let request_body = serde_json::json!({
+        "model": model,
+        "reasoning": { "effort": "medium" },
+        "input": [
+            {
+                "role": "system",
+                "content": [{ "type": "input_text", "text": system_prompt }]
+            },
+            {
+                "role": "user",
+                "content": [{ "type": "input_text", "text": user_prompt }]
+            }
+        ],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "ai_strategy_recommendation",
+                "strict": true,
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "recommendation": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "profile": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                        "minEdgePct": { "type": "number" },
+                                        "kellyMultiplier": { "type": "number" },
+                                        "maxStakePct": { "type": "number" },
+                                        "maxOpenRiskPct": { "type": "number" },
+                                        "minConfidence": { "type": "number" },
+                                        "hedgeStyle": { "type": "string", "enum": ["none", "equalResult", "breakEven"] }
+                                    },
+                                    "required": ["minEdgePct", "kellyMultiplier", "maxStakePct", "maxOpenRiskPct", "minConfidence", "hedgeStyle"]
+                                },
+                                "autoRefreshMinutes": { "type": "integer" },
+                                "liveOddsMode": { "type": "string", "enum": ["best", "consensus"] },
+                                "autoSync": { "type": "boolean" },
+                                "autoApplyNews": { "type": "boolean" },
+                                "confidence": { "type": "number" },
+                                "riskPosture": { "type": "string" },
+                                "summary": { "type": "string" },
+                                "reasons": {
+                                    "type": "array",
+                                    "items": { "type": "string" }
+                                },
+                                "warnings": {
+                                    "type": "array",
+                                    "items": { "type": "string" }
+                                }
+                            },
+                            "required": ["profile", "autoRefreshMinutes", "liveOddsMode", "autoSync", "autoApplyNews", "confidence", "riskPosture", "summary", "reasons", "warnings"]
+                        }
+                    },
+                    "required": ["recommendation"]
+                }
+            }
+        }
+    });
+
+    let response = client
+        .post("https://api.openai.com/v1/responses")
+        .bearer_auth(api_key)
+        .header("Content-Type", "application/json")
+        .json(&request_body)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Ok(AiStrategyResponse {
+            provider: AiProviderStatus {
+                configured: true,
+                available: false,
+                message: format!(
+                    "AI strategy recommendation failed with status {}, so the app fell back to local heuristics.",
+                    response.status()
+                ),
+                source_url: "https://developers.openai.com/api/reference/responses".into(),
+            },
+            generated_at,
+            model: Some(model),
+            fallback_used: true,
+            recommendation: fallback,
+        });
+    }
+
+    let response_json: serde_json::Value = response.json().await?;
+    let strategy_output = extract_openai_output_text(&response_json)
+        .and_then(|raw_text| serde_json::from_str::<AiStrategyModelOutput>(&raw_text).ok());
+
+    let Some(parsed) = strategy_output else {
+        return Ok(AiStrategyResponse {
+            provider: AiProviderStatus {
+                configured: true,
+                available: false,
+                message: "AI strategy output could not be verified as structured JSON, so the app fell back to local heuristics.".into(),
+                source_url: "https://developers.openai.com/api/reference/responses".into(),
+            },
+            generated_at,
+            model: Some(model),
+            fallback_used: true,
+            recommendation: fallback,
+        });
+    };
+
+    let normalized = normalize_ai_strategy_recommendation(parsed.recommendation, &fallback);
+
+    Ok(AiStrategyResponse {
+        provider: AiProviderStatus {
+            configured: true,
+            available: true,
+            message: "Generated AI bankroll and hedge settings from the current board, validation summaries, and paper-bet telemetry.".into(),
+            source_url: "https://developers.openai.com/api/reference/responses".into(),
+        },
+        generated_at,
+        model: Some(model),
+        fallback_used: false,
+        recommendation: normalized,
     })
 }
 
@@ -3017,6 +4843,172 @@ fn build_proxy_team(entry: &FieldEntry) -> PredictionTeam {
     }
 }
 
+fn region_first_round_games<'a>(
+    games: &'a [ActualGame],
+    region: &str,
+) -> Result<Vec<&'a ActualGame>, ApiError> {
+    let round_games = games
+        .iter()
+        .filter(|game| game.round_index == 0 && game.region == region)
+        .collect::<Vec<_>>();
+
+    if round_games.len() != FIRST_ROUND_SEED_PAIRS.len() {
+        return Err(ApiError::Parse(format!(
+            "Expected 8 first-round games in {region}, found {}",
+            round_games.len()
+        )));
+    }
+
+    let mut indexed_games = round_games
+        .into_iter()
+        .map(|game| {
+            let game_pair = ordered_seed_pair(game.team_a.seed, game.team_b.seed);
+            let slot = FIRST_ROUND_SEED_PAIRS
+                .iter()
+                .position(|pair| ordered_seed_pair(pair.0, pair.1) == game_pair)
+                .ok_or_else(|| {
+                    ApiError::Parse(format!(
+                        "Unexpected first-round seed pairing {}-{} in {region}",
+                        game.team_a.seed, game.team_b.seed
+                    ))
+                })?;
+            Ok((slot, game))
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    indexed_games.sort_by_key(|(slot, _)| *slot);
+    Ok(indexed_games
+        .into_iter()
+        .map(|(_, game)| game)
+        .collect::<Vec<_>>())
+}
+
+fn ordered_seed_pair(seed_a: u8, seed_b: u8) -> (u8, u8) {
+    if seed_a <= seed_b {
+        (seed_a, seed_b)
+    } else {
+        (seed_b, seed_a)
+    }
+}
+
+fn find_game_by_teams<'a>(
+    games: &[&'a ActualGame],
+    team_a: &str,
+    team_b: &str,
+) -> Option<&'a ActualGame> {
+    games.iter().copied().find(|game| {
+        (team_names_equivalent(&game.team_a.name, team_a)
+            && team_names_equivalent(&game.team_b.name, team_b))
+            || (team_names_equivalent(&game.team_a.name, team_b)
+                && team_names_equivalent(&game.team_b.name, team_a))
+    })
+}
+
+fn record_round_pick(
+    rounds: &mut BTreeMap<usize, RoundAccumulator>,
+    round_index: usize,
+    predicted_winner: &str,
+    actual_winner: &str,
+) {
+    let round = rounds.entry(round_index).or_insert_with(RoundAccumulator::default);
+    round.total += 1;
+    if team_names_equivalent(predicted_winner, actual_winner) {
+        round.correct += 1;
+    }
+}
+
+fn actual_region_winners(games: &[ActualGame]) -> Result<Vec<String>, ApiError> {
+    REGION_ORDER
+        .iter()
+        .map(|region| {
+            games.iter()
+                .find(|game| game.round_index == 3 && game.region == *region)
+                .map(|game| actual_winner_name(game).to_string())
+                .ok_or_else(|| {
+                    ApiError::Parse(format!("Missing Elite Eight result for {region}"))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn infer_semifinal_region_pairs(
+    games: &[ActualGame],
+    actual_region_winners: &[String],
+) -> Result<Vec<(usize, usize)>, ApiError> {
+    let semifinal_games = games
+        .iter()
+        .filter(|game| game.round_index == 4)
+        .collect::<Vec<_>>();
+    if semifinal_games.len() != 2 {
+        return Err(ApiError::Parse(format!(
+            "Expected 2 semifinal games, found {}",
+            semifinal_games.len()
+        )));
+    }
+
+    let mut pairs = Vec::with_capacity(semifinal_games.len());
+    let mut used_regions = [false; REGION_ORDER.len()];
+
+    for game in semifinal_games {
+        let regions = actual_region_winners
+            .iter()
+            .enumerate()
+            .filter_map(|(index, winner)| {
+                if team_names_equivalent(winner, &game.team_a.name)
+                    || team_names_equivalent(winner, &game.team_b.name)
+                {
+                    Some(index)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if regions.len() != 2 {
+            return Err(ApiError::Parse(format!(
+                "Could not infer semifinal region pairing from {} vs {}",
+                game.team_a.name, game.team_b.name
+            )));
+        }
+
+        for region_index in &regions {
+            if used_regions[*region_index] {
+                return Err(ApiError::Parse(
+                    "Historical semifinal region pairings reused the same region twice".into(),
+                ));
+            }
+            used_regions[*region_index] = true;
+        }
+
+        pairs.push((regions[0], regions[1]));
+    }
+
+    if used_regions.iter().any(|used| !used) {
+        return Err(ApiError::Parse(
+            "Historical semifinal region pairing inference missed a region".into(),
+        ));
+    }
+
+    Ok(pairs)
+}
+
+fn team_names_equivalent(left: &str, right: &str) -> bool {
+    let left_normalized = normalize_team_name(left);
+    let right_normalized = normalize_team_name(right);
+    if left_normalized == right_normalized {
+        return true;
+    }
+
+    team_aliases(left)
+        .into_iter()
+        .map(|alias| normalize_team_name(&alias))
+        .any(|alias| alias == right_normalized)
+        || team_aliases(right)
+            .into_iter()
+            .map(|alias| normalize_team_name(&alias))
+            .any(|alias| alias == left_normalized)
+}
+
 fn predict_bracket_champion(
     games: &[ActualGame],
     lookup: &HashMap<String, PredictionTeam>,
@@ -3025,17 +5017,7 @@ fn predict_bracket_champion(
     let mut region_winners = Vec::new();
 
     for region in REGION_ORDER {
-        let round_games = games
-            .iter()
-            .filter(|game| game.round_index == 0 && game.region == region)
-            .collect::<Vec<_>>();
-
-        if round_games.len() != FIRST_ROUND_SEED_PAIRS.len() {
-            return Err(ApiError::Parse(format!(
-                "Expected 8 first-round games in {region}, found {}",
-                round_games.len()
-            )));
-        }
+        let round_games = region_first_round_games(games, region)?;
 
         let mut winners = round_games
             .iter()
@@ -3054,9 +5036,16 @@ fn predict_bracket_champion(
         region_winners.push(winners[0].clone());
     }
 
-    let semifinal_a = predicted_winner_from_teams(&region_winners[0], &region_winners[1], 4, weights);
-    let semifinal_b = predicted_winner_from_teams(&region_winners[2], &region_winners[3], 4, weights);
-    Ok(predicted_winner_from_teams(&semifinal_a, &semifinal_b, 5, weights).name)
+    let actual_region_winners = actual_region_winners(games)?;
+    let semifinal_pairs = infer_semifinal_region_pairs(games, &actual_region_winners)?;
+    let semifinal_winners = semifinal_pairs
+        .into_iter()
+        .map(|(left, right)| {
+            predicted_winner_from_teams(&region_winners[left], &region_winners[right], 4, weights)
+        })
+        .collect::<Vec<_>>();
+
+    Ok(predicted_winner_from_teams(&semifinal_winners[0], &semifinal_winners[1], 5, weights).name)
 }
 
 fn predicted_winner(
@@ -3183,19 +5172,23 @@ fn initialize_db(db_path: &PathBuf) -> rusqlite::Result<()> {
             teams_json TEXT NOT NULL,
             weights_json TEXT NOT NULL,
             portfolio_json TEXT,
-            tournament_json TEXT
+            tournament_json TEXT,
+            prediction_log_json TEXT
         )",
         [],
     )?;
     ensure_column(&connection, "app_state", "portfolio_json", "TEXT")?;
     ensure_column(&connection, "app_state", "tournament_json", "TEXT")?;
+    ensure_column(&connection, "app_state", "prediction_log_json", "TEXT")?;
+    ensure_column(&connection, "app_state", "ai_prefill_json", "TEXT")?;
+    ensure_column(&connection, "app_state", "optimizer_settings_json", "TEXT")?;
     Ok(())
 }
 
 fn load_state_from_db(db_path: &PathBuf) -> Result<Option<StoredState>, ApiError> {
     let connection = Connection::open(db_path)?;
     let mut statement = connection.prepare(
-        "SELECT version, saved_at, teams_json, weights_json, COALESCE(portfolio_json, 'null'), COALESCE(tournament_json, 'null') FROM app_state WHERE id = 1",
+        "SELECT version, saved_at, teams_json, weights_json, COALESCE(portfolio_json, 'null'), COALESCE(tournament_json, 'null'), COALESCE(prediction_log_json, 'null'), COALESCE(ai_prefill_json, 'null'), COALESCE(optimizer_settings_json, 'null') FROM app_state WHERE id = 1",
     )?;
 
     let row = statement
@@ -3204,6 +5197,9 @@ fn load_state_from_db(db_path: &PathBuf) -> Result<Option<StoredState>, ApiError
             let weights_json: String = row.get(3)?;
             let portfolio_json: String = row.get(4)?;
             let tournament_json: String = row.get(5)?;
+            let prediction_log_json: String = row.get(6)?;
+            let ai_prefill_json: String = row.get(7)?;
+            let optimizer_settings_json: String = row.get(8)?;
             Ok(StoredState {
                 version: row.get(0)?,
                 saved_at: row.get(1)?,
@@ -3211,6 +5207,9 @@ fn load_state_from_db(db_path: &PathBuf) -> Result<Option<StoredState>, ApiError
                 weights: serde_json::from_str(&weights_json).map_err(to_sql_error)?,
                 portfolio: serde_json::from_str(&portfolio_json).map_err(to_sql_error)?,
                 tournament: serde_json::from_str(&tournament_json).map_err(to_sql_error)?,
+                prediction_log: serde_json::from_str(&prediction_log_json).map_err(to_sql_error)?,
+                ai_prefill: serde_json::from_str(&ai_prefill_json).map_err(to_sql_error)?,
+                optimizer_settings: serde_json::from_str(&optimizer_settings_json).map_err(to_sql_error)?,
             })
         })
         .optional()?;
@@ -3221,15 +5220,18 @@ fn load_state_from_db(db_path: &PathBuf) -> Result<Option<StoredState>, ApiError
 fn save_state_to_db(db_path: &PathBuf, payload: &StoredState) -> Result<(), ApiError> {
     let connection = Connection::open(db_path)?;
     connection.execute(
-        "INSERT INTO app_state (id, version, saved_at, teams_json, weights_json, portfolio_json, tournament_json)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO app_state (id, version, saved_at, teams_json, weights_json, portfolio_json, tournament_json, prediction_log_json, ai_prefill_json, optimizer_settings_json)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(id) DO UPDATE SET
             version = excluded.version,
             saved_at = excluded.saved_at,
             teams_json = excluded.teams_json,
             weights_json = excluded.weights_json,
             portfolio_json = excluded.portfolio_json,
-            tournament_json = excluded.tournament_json",
+            tournament_json = excluded.tournament_json,
+            prediction_log_json = excluded.prediction_log_json,
+            ai_prefill_json = excluded.ai_prefill_json,
+            optimizer_settings_json = excluded.optimizer_settings_json",
         params![
             payload.version,
             if payload.saved_at.is_empty() {
@@ -3241,6 +5243,9 @@ fn save_state_to_db(db_path: &PathBuf, payload: &StoredState) -> Result<(), ApiE
             serde_json::to_string(&payload.weights).map_err(ApiError::Json)?,
             serde_json::to_string(&payload.portfolio).map_err(ApiError::Json)?,
             serde_json::to_string(&payload.tournament).map_err(ApiError::Json)?,
+            serde_json::to_string(&payload.prediction_log).map_err(ApiError::Json)?,
+            serde_json::to_string(&payload.ai_prefill).map_err(ApiError::Json)?,
+            serde_json::to_string(&payload.optimizer_settings).map_err(ApiError::Json)?,
         ],
     )?;
     Ok(())
@@ -4148,6 +6153,9 @@ mod tests {
             weights: serde_json::json!({"efficiency": 30}),
             portfolio: serde_json::json!({"startingBankroll": 1000, "bets": []}),
             tournament: serde_json::json!({"year": 2026, "games": []}),
+            prediction_log: serde_json::json!({"entries": []}),
+            ai_prefill: serde_json::json!(null),
+            optimizer_settings: serde_json::json!(null),
         }
     }
 
@@ -4167,6 +6175,7 @@ mod tests {
         assert_eq!(loaded.weights, state.weights);
         assert_eq!(loaded.portfolio, state.portfolio);
         assert_eq!(loaded.tournament, state.tournament);
+        assert_eq!(loaded.prediction_log, state.prediction_log);
 
         let _ = std::fs::remove_file(db_path);
     }

@@ -13,24 +13,48 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div class="page-shell">
-      <header class="hero glass-panel">
-        <div class="hero__copy">
-          <p class="eyebrow">Madness Oracle Pro</p>
-          <h1>A real 64-team March Madness betting and bracket workbench.</h1>
-          <p class="hero__lede">
-            Yes — the tournament has 64 teams in the main bracket. This version models the full field,
-            simulates all six rounds, and turns probabilities into betting edges so you can hunt for
-            mispriced lines instead of pretending any app can be 100% right.
-          </p>
-          <div class="hero__control-dock">
-            <div class="hero__primary-actions">
-              <button id="simulateButton" class="button button--primary">Run 25,000 simulations</button>
-              <button id="loadOfficialFieldButton" class="button button--ghost">Load official 2026 field</button>
-              <button id="syncLiveButton" class="button button--ghost">Sync results, odds + news</button>
-              <button id="generateAiPrefillButton" class="button button--ghost">Generate researched AI prefill</button>
+    <div class="app-layout">
+      <aside class="app-sidebar glass-panel">
+        <div class="brand">
+          <h1>Madness Oracle Pro</h1>
+          <p>64-team betting workbench</p>
+        </div>
+        <nav id="workspaceNav" class="workspace-nav" aria-label="Dashboard workspaces">
+          <div id="workspaceTabs" class="workspace-tabs"></div>
+        </nav>
+      </aside>
+
+      <div class="app-main">
+        <header class="app-topbar">
+          <div class="simulation-toolbar">
+            <button id="simulateButton" class="button button--primary">Run 25,000 simulations</button>
+            <label class="simulation-field" for="simulationIterationsInput">
+              <span>Monte Carlo runs</span>
+              <input id="simulationIterationsInput" type="number" min="1000" step="5000" value="25000" />
+            </label>
+            <div id="simulationStatus" class="simulation-status" aria-live="polite"></div>
+          </div>
+        </header>
+
+        <main class="dashboard">
+          <section class="glass-panel span-12 dashboard-panel hero-panel" data-workspace="overview">
+            <div class="hero__copy">
+              <p class="eyebrow">Overview</p>
+              <h2>A real 64-team March Madness betting and bracket workbench.</h2>
+              <p class="hero__lede">
+                Yes — the tournament has 64 teams in the main bracket. This version models the full field,
+                simulates all six rounds, and turns probabilities into betting edges so you can hunt for
+                mispriced lines instead of pretending any app can be 100% right.
+              </p>
+              <div class="hero__actions mt-actions">
+                <button id="loadOfficialFieldButton" class="button button--ghost button--small">Load official 2026 field</button>
+                <button id="syncLiveButton" class="button button--ghost button--small">Sync results, odds + news</button>
+                <button id="generateAiPrefillButton" class="button button--ghost button--small">Generate + apply AI prefill</button>
+                <button id="generateAiStrategyButton" class="button button--ghost button--small">Generate AI betting settings</button>
+              </div>
             </div>
-            <div class="hero__action-groups">
+
+            <div class="hero__action-groups mt-groups">
               <section class="action-group">
                 <div class="action-group__heading">
                   <p class="eyebrow">Validation</p>
@@ -38,6 +62,7 @@
                 </div>
                 <div class="action-group__buttons">
                   <button id="runBacktestButton" class="button button--ghost">Run historical backtest</button>
+                  <button id="runScoreBacktestButton" class="button button--ghost">Run score replay</button>
                   <button id="runEvolutionButton" class="button button--ghost">Run evolution lab</button>
                   <button id="runStrategyButton" class="button button--ghost">Run strategy lab</button>
                   <button id="resetButton" class="button button--ghost">Reset loaded field</button>
@@ -51,7 +76,8 @@
                 <div class="action-group__buttons">
                   <button id="applyLiveOddsButton" class="button button--ghost">Apply live odds</button>
                   <button id="applyNewsSignalsButton" class="button button--ghost">Apply news context</button>
-                  <button id="applyAiPrefillButton" class="button button--ghost">Apply AI prefill</button>
+                  <button id="applyAiPrefillButton" class="button button--ghost">Re-apply AI prefill</button>
+                  <button id="applyAiStrategyButton" class="button button--ghost">Apply AI betting settings</button>
                   <button id="applyEvolutionButton" class="button button--ghost">Apply evolved weights</button>
                   <button id="applyStrategyButton" class="button button--ghost">Apply evolved strategy</button>
                 </div>
@@ -65,48 +91,27 @@
                   <button id="saveLocalButton" class="button button--ghost">Save to database</button>
                   <button id="exportButton" class="button button--ghost">Export picks</button>
                   <button id="importButton" class="button button--ghost">Import picks</button>
-                  <button id="clearStorageButton" class="button button--ghost">Clear database save</button>
+                  <button id="clearStorageButton" class="button button--ghost">Clear database + start over</button>
                 </div>
               </section>
               <input id="importFileInput" type="file" accept="application/json" hidden />
             </div>
-          </div>
-          <div class="hero__badges">
-            <span>64-team bracket</span>
-            <span>Official NCAA sync</span>
-            <span>Backtest baseline</span>
-            <span>Market edge view</span>
-            <span>Monte Carlo</span>
-            <span>Paper bankroll</span>
-            <span>Explainable ratings</span>
-          </div>
-        </div>
-        <div class="hero__card">
-          <h2>How to actually use this</h2>
-          <ul>
-            <li>Start with efficiency and Four Factors.</li>
-            <li>Blend in injuries, travel, recent form, coach quality, and roster experience.</li>
-            <li>Compare model probabilities to sportsbook prices.</li>
-            <li>Bet only when model edge survives vig and uncertainty.</li>
-          </ul>
-          <p class="hero__note">
-            Goal: beat bad prices and improve bracket EV. Not magic. Not certainty. Not “free money.”
-          </p>
-        </div>
-      </header>
-
-      <nav id="workspaceNav" class="workspace-nav glass-panel" aria-label="Dashboard workspaces">
-        <div class="workspace-nav__copy">
-          <p class="eyebrow">Workspaces</p>
-          <h2>Use focused sections instead of one long scroll</h2>
-          <p class="section-copy">
-            Switch between the current edge, live research, editing, and validation views without carrying the whole dashboard at once.
-          </p>
-        </div>
-        <div id="workspaceTabs" class="workspace-tabs"></div>
-      </nav>
-
-      <main class="dashboard">
+            
+            <div class="hero__card mt-groups">
+              <h2>How to make the best bets</h2>
+              <ul>
+                <li><strong>1.</strong> Click <strong>Load official 2026 field</strong> after a reset or if you want a fresh bracket.</li>
+                <li><strong>2.</strong> Click <strong>Sync results, odds + news</strong> to refresh the live round and sportsbook prices.</li>
+                <li><strong>3.</strong> Click <strong>Generate + apply AI prefill</strong> to load coach, injury, form, experience, and continuity context into Team Lab and the model.</li>
+                <li><strong>4.</strong> Click <strong>Generate AI betting settings</strong> to tune Kelly, edge floor, confidence floor, and hedge style.</li>
+                <li><strong>5.</strong> Run <strong>25,000</strong> simulations for a quick pass or <strong>100,000</strong> for a cleaner final board.</li>
+                <li><strong>6.</strong> Go to the <strong>Betting</strong> workspace and use the top recommendation cards there.</li>
+              </ul>
+              <p class="hero__note">
+                If you apply live odds, news, AI prefill, evolved weights, or evolved strategy, rerun the simulations before trusting the board. Backtest, score replay, evolution lab, and strategy lab are optional deeper checks, not required for the daily workflow.
+              </p>
+            </div>
+          </section>
         <section class="glass-panel span-8 dashboard-panel" data-workspace="overview">
           <div class="section-heading">
             <div>
@@ -220,7 +225,12 @@
                 <option value="none">No hedge</option>
                 <option value="equalResult">Equal result</option>
                 <option value="breakEven">Break even</option>
+                <option value="adaptive">Adaptive per bet</option>
               </select>
+            </label>
+            <label class="toggle-row">
+              <span>Use cached AI research in model</span>
+              <input id="useResearchCacheInput" type="checkbox" />
             </label>
             <label>
               <span>Auto-refresh min</span>
@@ -242,9 +252,26 @@
               <input id="autoApplyNewsInput" type="checkbox" />
             </label>
           </div>
+          <div id="aiStrategyBoard" class="season-status-grid"></div>
           <div id="tournamentStatusBoard" class="season-status-grid"></div>
           <div id="portfolioSummary" class="summary-cards"></div>
           <div id="betSizingBoard" class="portfolio-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="betting">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Prediction log</p>
+              <h2>Lock forecasts before tip, then grade them later</h2>
+            </div>
+            <div class="section-actions">
+              <button id="lockPredictionsButton" class="button button--ghost">Lock current-round predictions</button>
+            </div>
+          </div>
+          <p class="section-copy">
+            This keeps an auditable pregame record of projected winner, score, margin, total, and model context. Locked games stay frozen even if prices, news, or weights change afterward.
+          </p>
+          <div id="predictionLogBoard" class="backtest-grid"></div>
         </section>
 
         <section class="glass-panel span-12 dashboard-panel" data-workspace="research">
@@ -277,6 +304,7 @@
             </p>
           </div>
           <div id="aiPrefillStatus" class="season-status-grid"></div>
+          <div id="researchCacheBoard" class="season-status-grid"></div>
           <div id="aiPrefillBoard" class="portfolio-grid"></div>
         </section>
 
@@ -298,8 +326,8 @@
                   <th>Placed</th>
                   <th>Bet</th>
                   <th>Odds</th>
-                  <th>Stake</th>
-                  <th>To win</th>
+                  <th>Outlay</th>
+                  <th>Net result</th>
                   <th>EV</th>
                   <th>Status</th>
                   <th>Actions</th>
@@ -308,6 +336,20 @@
               <tbody id="betLedgerBody"></tbody>
             </table>
           </div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="betting">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Feedback loop</p>
+              <h2>CLV, reward tracking, and overlay learning</h2>
+            </div>
+            <p class="section-copy">
+              Every paper bet now keeps its context, line snapshots, hedge mode, and outcome so the
+              app can grade whether the overlay discipline is actually improving price quality and drawdown control.
+            </p>
+          </div>
+          <div id="feedbackLoopBoard" class="season-status-grid"></div>
         </section>
 
         <section class="glass-panel span-12 dashboard-panel" data-workspace="betting">
@@ -418,6 +460,46 @@
         <section class="glass-panel span-12 dashboard-panel" data-workspace="validation">
           <div class="section-heading">
             <div>
+              <p class="eyebrow">Heavy runs</p>
+              <h2>Push the optimizer deeper without freezing the app</h2>
+            </div>
+            <p class="section-copy">
+              Larger populations, longer generations, and multi-start search run as background jobs.
+              Kick them off here, then keep using the rest of the dashboard while they work.
+            </p>
+          </div>
+          <div class="portfolio-controls">
+            <label>
+              <span>Evolution population</span>
+              <input id="evolutionPopulationInput" type="number" min="24" max="256" step="8" value="96" />
+            </label>
+            <label>
+              <span>Evolution generations</span>
+              <input id="evolutionGenerationsInput" type="number" min="8" max="80" step="1" value="30" />
+            </label>
+            <label>
+              <span>Evolution restarts</span>
+              <input id="evolutionRestartsInput" type="number" min="1" max="8" step="1" value="3" />
+            </label>
+            <label>
+              <span>Strategy population</span>
+              <input id="strategyPopulationInput" type="number" min="24" max="256" step="8" value="84" />
+            </label>
+            <label>
+              <span>Strategy generations</span>
+              <input id="strategyGenerationsInput" type="number" min="8" max="80" step="1" value="28" />
+            </label>
+            <label>
+              <span>Strategy restarts</span>
+              <input id="strategyRestartsInput" type="number" min="1" max="8" step="1" value="3" />
+            </label>
+          </div>
+          <div id="optimizerJobBoard" class="season-status-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="validation">
+          <div class="section-heading">
+            <div>
               <p class="eyebrow">Backtest</p>
               <h2>How the system did on prior years</h2>
             </div>
@@ -427,6 +509,19 @@
             </p>
           </div>
           <div id="backtestBoard" class="backtest-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="validation">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Score replay</p>
+              <h2>No-lookahead score grading on prior years</h2>
+            </div>
+            <p class="section-copy">
+              Each archived game is frozen before grading: the system projects winner probability, margin, total, and team scores using only the pregame field lookup for that season, then compares that snapshot to the actual final.
+            </p>
+          </div>
+          <div id="scoreBacktestBoard" class="backtest-grid"></div>
         </section>
 
         <section class="glass-panel span-12 dashboard-panel" data-workspace="validation">
@@ -454,6 +549,20 @@
             </p>
           </div>
           <div id="strategyBoard" class="backtest-grid"></div>
+        </section>
+
+        <section class="glass-panel span-12 dashboard-panel" data-workspace="validation">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Promotion gate</p>
+              <h2>Review overlay changes before they go live</h2>
+            </div>
+            <div class="section-actions">
+              <button id="runOverlayReviewButton" class="button button--ghost">Run promotion review</button>
+              <button id="applyOverlayButton" class="button button--ghost">Apply approved overlay</button>
+            </div>
+          </div>
+          <div id="overlayReviewBoard" class="backtest-grid"></div>
         </section>
 
         <section class="glass-panel span-12 dashboard-panel" data-workspace="research">
@@ -505,6 +614,7 @@
           </div>
         </section>
       </main>
+      </div>
     </div>
 
     <script src="app.js"></script>
